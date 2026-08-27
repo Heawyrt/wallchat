@@ -74,15 +74,26 @@
     .reaction-btn { background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: 12px; padding: 2px 6px; font-size: 0.75rem; cursor: pointer; color: #fff; }
     .reaction-btn.active { border-color: #b83bde; background: rgba(184,59,222,0.3); }
 
-    /* Панель эмодзи: только EMOJIS теперь */
     .msg-actions { display: none; gap: 4px; position: absolute; top: -14px; right: 10px; background: #17212b; border: 1px solid var(--border-color); border-radius: 8px; padding: 2px 6px; z-index: 5; }
     .message-row:hover .msg-actions { display: flex; }
     .msg-action-btn { background: none; border: none; cursor: pointer; padding: 2px; font-size: 0.85rem; }
 
-    /* Кнопка "Ответить" на пузыре сообщения */
-    .bubble-reply-btn { position: absolute; top: 8px; right: 8px; background: none; border: none; cursor: pointer; font-size: 0.8rem; padding: 2px; color: rgba(255,255,255,0.6); display: none; }
-    .message-bubble:hover .bubble-reply-btn { display: inline-block; }
-    .bubble-reply-btn:hover { color: #fff; }
+    /* Изменение 5: Стиль для кнопки Ответить в углу сообщения */
+    .msg-corner-reply {
+      display: none;
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 0.85rem;
+      opacity: 0.5;
+      color: #fff;
+      padding: 0;
+    }
+    .message-bubble:hover .msg-corner-reply { display: block; }
+    .message-bubble:hover .msg-corner-reply:hover { opacity: 1; }
 
     .selection-top-bar { display: none; background: #121921; padding: 10px 16px; border-bottom: 1px solid var(--border-color); justify-content: space-between; align-items: center; }
 
@@ -119,7 +130,7 @@
     <input type="text" id="authName" placeholder="Имя пользователя">
     <input type="password" id="authPass" placeholder="Пароль">
     <div id="regHint" style="font-size:0.75rem; color:#8e949a; display:none;">
-      * Пароль должен быть от 4 до 20 символов, содержать цифры 1-9 и буквы англ/рус. Heawyrt и w1len станут друзьями автоматически.
+      * Длина пароля: 4-20 символов (1-9, A-Z, А-Я).
     </div>
     <div id="regDobBox" style="display:none;">
       <label style="font-size:0.8rem; color:#8e949a;">Дата рождения:</label>
@@ -141,19 +152,60 @@
       <label style="font-size:0.8rem; color:#8e949a;">Дата рождения:</label>
       <input type="date" id="setDob" style="width:100%; margin-top:4px;">
     </div>
-    <input type="password" id="setPass" placeholder="Новый пароль (от 4 до 20, 1-9, A-Z, А-Я)">
+    <input type="password" id="setPass" placeholder="Новый пароль (4-20 символов)">
 
     <div id="userSuggestionsBox" style="border-top: 1px solid var(--border-color); pt-10; margin-top:8px; padding-top:10px;">
       <div style="font-weight:bold; font-size:0.85rem; margin-bottom:4px; color:#b83bde;">Предложения по улучшению</div>
-      <div style="font-size:0.75rem; color:#8e949a; margin-bottom:6px;">Отправьте сообщение администраторам heawyrt и w1len:</div>
+      <div style="font-size:0.75rem; color:#8e949a; margin-bottom:6px;">Отправьте сообщение heawyrt и w1len:</div>
       <textarea id="suggestionInput" rows="2" placeholder="Ваши идеи..." style="width:100%; font-size:0.85rem; margin-bottom:6px;"></textarea>
-      <button onclick="sendUserSuggestion()" style="width:100%; padding:6px;">Отправить в Предложку</button>
+      <button onclick="sendUserSuggestion()" style="width:100%; padding:6px;">Отправить</button>
     </div>
 
     <button onclick="saveSettings()">Сохранить изменения</button>
     <button class="secondary" onclick="toggleModal('settingsModal', false)">Закрыть</button>
     <button class="secondary" style="background:#d32f2f" onclick="logout()">Выйти</button>
-    <div style="text-align: center; color: #8e949a; font-size: 0.8rem; margin-top: 8px;">Версия 1.2.1</div>
+
+    <div style="text-align: center; color: #8e949a; font-size: 0.8rem; margin-top: 8px;">Версия 1.2.0</div>
+  </div>
+
+  <div id="forwardModal" class="modal">
+    <h2>Переслать сообщения</h2>
+    <div style="font-size:0.85rem; color:#8e949a;">Выберите чат для отправки:</div>
+    <div id="forwardChatsList" style="max-height:200px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
+    <button class="secondary" onclick="toggleModal('forwardModal', false)">Отмена</button>
+  </div>
+
+  <div id="groupSettingsModal" class="modal">
+    <h2>Управление группой</h2>
+    <div id="founderRenameSection">
+      <label style="font-size:0.8rem; color:#8e949a;">Название группы:</label>
+      <div style="display:flex; gap:6px; margin-top:4px;">
+        <input type="text" id="editGroupNameInput">
+        <button onclick="renameGroup()">Сохранить</button>
+      </div>
+    </div>
+    
+    <div style="font-size:0.85rem; font-weight:bold; margin-top:10px;">Добавить участника из друзей:</div>
+    <div style="display:flex; gap:6px;">
+      <select id="addMemberSelect" style="flex:1; background:var(--input-bg); color:#fff; border:none; border-radius:8px; padding:8px;"></select>
+      <button onclick="addMemberToGroup()">Добавить</button>
+    </div>
+
+    <div style="font-size:0.85rem; font-weight:bold; margin-top:10px;">Участники:</div>
+    <div id="groupMembersList" style="max-height:150px; overflow-y:auto;"></div>
+
+    <button id="leaveGroupBtn" class="secondary" style="background:#d32f2f;" onclick="leaveGroup()">Покинуть группу</button>
+    <button id="deleteGroupBtn" class="secondary" style="background:#900; display:none;" onclick="deleteGroup()">Удалить группу</button>
+    <button class="secondary" onclick="toggleModal('groupSettingsModal', false)">Закрыть</button>
+  </div>
+
+  <div id="createGroupModal" class="modal">
+    <h2>Создать группу</h2>
+    <input type="text" id="groupNameInput" placeholder="Название группы">
+    <div style="font-size:0.9rem; margin-top:6px;">Выберите друзей:</div>
+    <div id="friendsChecklist" style="max-height:150px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
+    <button onclick="submitCreateGroup()">Создать чат</button>
+    <button class="secondary" onclick="toggleModal('createGroupModal', false)">Отмена</button>
   </div>
 
   <div id="appContainer" class="app-container">
@@ -178,9 +230,14 @@
       </div>
 
       <div id="friendsTab" class="tab-content" style="display:none;">
-        <div style="display:flex; gap:6px;"><input type="text" id="addFriendName" placeholder="Никнейм" style="font-size:0.85rem;"><button onclick="sendFriendRequest()">+</button></div>
+        <div style="display:flex; gap:6px;">
+          <input type="text" id="addFriendName" placeholder="Никнейм друга" style="font-size:0.85rem;">
+          <button onclick="sendFriendRequest()" style="padding:8px 12px;">+</button>
+        </div>
         <button onclick="openCreateGroupModal()" style="margin-top:6px;" class="secondary">+ Создать группу</button>
+        <div style="font-size:0.8rem; color:#8e949a; margin-top:10px;">ЗАЯВКИ В ДРУЗЬЯ</div>
         <div id="requestsList"></div>
+        <div style="font-size:0.8rem; color:#8e949a; margin-top:10px;">МОИ ДРУЗЬЯ</div>
         <div id="friendsList"></div>
       </div>
     </div>
@@ -200,19 +257,37 @@
       <div id="chatHeader" class="chat-header" style="display:none;">
         <div style="display:flex; align-items:center; gap:10px;">
           <div id="activeChatAvatar" class="avatar">C</div>
-          <div><div id="activeChatName">Выберите чат</div><div id="activeChatSub"></div></div>
+          <div>
+            <div id="activeChatName" style="display:flex; align-items:center; gap:4px;">Выберите чат</div>
+            <div id="activeChatSub" style="font-size:0.75rem; color:#8e949a;"></div>
+          </div>
         </div>
-        <button id="groupSettingsBtn" class="secondary" onclick="openGroupSettings()">⚙</button>
+        <button id="groupSettingsBtn" class="secondary" style="display:none; padding:6px 10px;" onclick="openGroupSettings()">⚙ Настройки</button>
       </div>
 
-      <div id="emptyState" class="empty-chat-state">Выберите диалог</div>
-      <div id="messagesArea" class="messages-area" style="display:none;"></div>
-      <div id="actionPreviewBar" class="action-preview-bar">
-        <div id="actionPreviewText"></div><button class="secondary" onclick="cancelActionPreview()">✕</button>
+      <div id="emptyState" class="empty-chat-state">
+        Выберите диалог из списка слева
       </div>
+
+      <div id="messagesArea" class="messages-area" style="display:none;"></div>
+
+      <div id="actionPreviewBar" class="action-preview-bar">
+        <div id="actionPreviewText"></div>
+        <button class="secondary" onclick="cancelActionPreview()" style="padding:2px 6px;">✕</button>
+      </div>
+
+      <div id="imgPreviewBar" class="action-preview-bar" style="background:#121921;">
+        <img id="imgPreview" src="" alt="preview" style="height:40px; border-radius:4px;">
+        <span style="font-size:0.85rem; flex:1; margin-left:8px;">Фото готово к отправке</span>
+        <button class="secondary" onclick="cancelImage()" style="padding:2px 6px;">✕</button>
+      </div>
+
       <form id="chatForm" class="input-area" style="display:none;" onsubmit="handleSendMsg(event)">
-        <label class="photo-btn">📷<input type="file" id="msgPhotoInput" accept="image/*" style="display:none;" onchange="handleMsgPhoto(this)"></label>
-        <input type="text" id="msgInput" placeholder="Сообщение..." autocomplete="off">
+        <label class="photo-btn" title="Отправить фото">
+          📷
+          <input type="file" id="msgPhotoInput" accept="image/*" style="display:none;" onchange="handleMsgPhoto(this)">
+        </label>
+        <input type="text" id="msgInput" placeholder="Напишите сообщение..." autocomplete="off">
         <button type="submit" id="sendBtn">Отправить</button>
       </form>
     </div>
@@ -230,7 +305,6 @@
     let myData = { friends: [], friendRequests: [], groups: [], dob: null };
     let currentHistory = [];
 
-    // Состояния сообщений
     let selectedMsgIds = new Set();
     let replyToMsg = null;
     let editingMsgId = null;
@@ -244,6 +318,8 @@
 
     function switchAuthTab(mode) {
       authMode = mode;
+      document.getElementById('regAvatarBox').style.display = mode === 'reg' ? 'block' : 'none';
+      document.getElementById('regDobBox').style.display = mode === 'reg' ? 'block' : 'none';
       document.getElementById('regHint').style.display = mode === 'reg' ? 'block' : 'none';
       document.getElementById('tabLogin').className = mode === 'login' ? '' : 'secondary';
       document.getElementById('tabReg').className = mode === 'reg' ? '' : 'secondary';
@@ -267,6 +343,11 @@
       const dob = document.getElementById('authDob').value;
       if (!username || !password) return alert('Заполните поля');
 
+      // Изменение 3: Проверка длины пароля (4-20) на клиенте
+      if (authMode === 'reg' && (password.length < 4 || password.length > 20)) {
+        return alert('Длина пароля должна быть от 4 до 20 символов');
+      }
+
       const endpoint = authMode === 'login' ? '/api/login' : '/api/register';
       const body = { username, password, avatar: authMode === 'reg' ? tempAvatarBase64 : undefined, dob };
 
@@ -287,6 +368,14 @@
       const res = await fetch('/api/me', { headers: { 'Authorization': `Bearer ${currentUser.token}` } });
       if (res.ok) {
         myData = await res.json();
+        
+        // Изменение 2: Скрытие предложений для heawyrt и w1len
+        if (currentUser.isAdmin) {
+          document.getElementById('userSuggestionsBox').style.display = 'none';
+        } else {
+          document.getElementById('userSuggestionsBox').style.display = 'block';
+        }
+
         renderSidebar();
       } else {
         logout();
@@ -294,10 +383,19 @@
     }
 
     function renderSidebar() {
-      // Мой профиль и Скрытие Предложки для админов
-      document.getElementById('userSuggestionsBox').style.display = currentUser.isAdmin ? 'none' : 'block';
       document.getElementById('myName').textContent = currentUser.username;
+      document.getElementById('myAdminBadge').innerHTML = currentUser.isAdmin ? adminCheckmarkSVG : '';
       document.getElementById('setDob').value = myData.dob || '';
+
+      if (currentUser.avatar) {
+        document.getElementById('myAvatar').src = currentUser.avatar;
+        document.getElementById('myAvatar').style.display = 'block';
+        document.getElementById('myAvatarText').style.display = 'none';
+      } else {
+        document.getElementById('myAvatarText').textContent = currentUser.username[0].toUpperCase();
+        document.getElementById('myAvatarText').style.display = 'flex';
+        document.getElementById('myAvatar').style.display = 'none';
+      }
 
       const chatsList = document.getElementById('chatsList');
       chatsList.innerHTML = '';
@@ -308,40 +406,163 @@
       savedItem.onclick = () => openChat({ type: 'saved', id: 'saved', name: 'Избранное', avatar: null });
       savedItem.innerHTML = `
         <div class="avatar" style="background:var(--primary-gradient);">⭐</div>
-        <div class="info"><div class="name">Избранное</div></div>
+        <div class="info">
+          <div class="name">Избранное</div>
+          <div style="font-size:0.75rem; color:#8e949a;">Заметки</div>
+        </div>
       `;
       chatsList.appendChild(savedItem);
 
-      // 2. Предложка (Админы)
+      // 2. Предложка (Только для админов heawyrt и w1len)
       if (currentUser.isAdmin) {
         const suggItem = document.createElement('div');
         suggItem.className = `chat-item ${activeChat?.type === 'suggestions' ? 'active' : ''}`;
         suggItem.onclick = () => openChat({ type: 'suggestions', id: 'suggestions', name: 'Предложка', avatar: null });
-        suggItem.innerHTML = `<div class="avatar" style="background:var(--primary-gradient);">💡</div><div class="info"><div class="name">Предложка</div></div>`;
+        suggItem.innerHTML = `
+          <div class="avatar" style="background:linear-gradient(135deg, #ff9800, #b83bde);">💡</div>
+          <div class="info">
+            <div class="name">Предложка</div>
+            <div style="font-size:0.75rem; color:#8e949a;">Идеи</div>
+          </div>
+        `;
         chatsList.appendChild(suggItem);
       }
 
-      // 3. Друзья и 4. Группы
+      // 3. Личные чаты (Друзья)
       myData.friends.forEach(f => {
         const item = document.createElement('div');
         item.className = `chat-item ${activeChat?.id === f.username ? 'active' : ''}`;
         item.onclick = () => openChat({ type: 'dm', id: f.username, name: f.username, avatar: f.avatar, isAdmin: f.isAdmin });
+        
         const avatarHTML = f.avatar ? `<img class="avatar" src="${f.avatar}">` : `<div class="avatar">${f.username[0].toUpperCase()}</div>`;
-        item.innerHTML = `${avatarHTML}<div class="info"><div class="name">${f.username}${f.isAdmin ? adminCheckmarkSVG : ''}</div></div>`;
+        item.innerHTML = `
+          ${avatarHTML}
+          <div class="info">
+            <div class="name">${f.username} ${f.isAdmin ? adminCheckmarkSVG : ''}</div>
+          </div>
+        `;
         chatsList.appendChild(item);
       });
 
+      // 4. Группы
       myData.groups.forEach(g => {
         const item = document.createElement('div');
+        item.className = `chat-item ${activeChat?.id === g.id ? 'active' : ''}`;
         item.onclick = () => openChat({ type: 'group', id: g.id, name: g.name, groupData: g });
-        item.innerHTML = `<div class="avatar" style="background:#b83bde;">👥</div><div class="info"><div class="name">${g.name}${g.isFounder ? '<span class="founder-badge">Founder</span>' : ''}</div></div>`;
+
+        item.innerHTML = `
+          <div class="avatar" style="background:#b83bde;">👥</div>
+          <div class="info">
+            <div class="name">${g.name} ${g.isFounder ? '<span class="founder-badge">Founder</span>' : ''}</div>
+          </div>
+        `;
         chatsList.appendChild(item);
+      });
+
+      // Заявки и друзья
+      const reqList = document.getElementById('requestsList');
+      reqList.innerHTML = myData.friendRequests.length === 0 ? '<div style="font-size:0.8rem; color:#666;">Нет заявок</div>' : '';
+      myData.friendRequests.forEach(r => {
+        const item = document.createElement('div');
+        item.className = 'chat-item';
+        item.innerHTML = `
+          <div class="info"><div class="name">${r.username}</div></div>
+          <button onclick="acceptRequest('${r.username}')" style="padding:4px 8px;">✓</button>
+          <button onclick="rejectRequest('${r.username}')" class="secondary" style="padding:4px 8px;">✕</button>
+        `;
+        reqList.appendChild(item);
+      });
+
+      const fList = document.getElementById('friendsList');
+      fList.innerHTML = myData.friends.length === 0 ? '<div style="font-size:0.8rem; color:#666;">Список пуст</div>' : '';
+      myData.friends.forEach(f => {
+        const item = document.createElement('div');
+        item.className = 'chat-item';
+        item.onclick = () => { switchSidebarTab('chats'); openChat({ type: 'dm', id: f.username, name: f.username, avatar: f.avatar, isAdmin: f.isAdmin }); };
+        item.innerHTML = `<div class="name">${f.username} ${f.isAdmin ? adminCheckmarkSVG : ''}</div>`;
+        fList.appendChild(item);
       });
     }
 
     function switchSidebarTab(tab) {
       document.getElementById('chatsTab').style.display = tab === 'chats' ? 'flex' : 'none';
       document.getElementById('friendsTab').style.display = tab === 'friends' ? 'flex' : 'none';
+      document.getElementById('tabChatsBtn').className = `nav-tab ${tab === 'chats' ? 'active' : ''}`;
+      document.getElementById('tabFriendsBtn').className = `nav-tab ${tab === 'friends' ? 'active' : ''}`;
+    }
+
+    async function sendUserSuggestion() {
+      const text = document.getElementById('suggestionInput').value.trim();
+      if (!text) return alert('Введите текст');
+
+      const res = await fetch('/api/suggestions/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ text })
+      });
+      const data = await res.json();
+      alert(data.message || data.error);
+      if (res.ok) document.getElementById('suggestionInput').value = '';
+    }
+
+    async function sendFriendRequest() {
+      const name = document.getElementById('addFriendName').value.trim();
+      if (!name) return;
+      const res = await fetch('/api/friends/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ targetUsername: name })
+      });
+      const data = await res.json();
+      alert(data.message || data.error);
+      if (res.ok) { document.getElementById('addFriendName').value = ''; loadMyData(); }
+    }
+
+    async function acceptRequest(requesterUsername) {
+      await fetch('/api/friends/accept', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ requesterUsername })
+      });
+      loadMyData();
+    }
+
+    async function rejectRequest(requesterUsername) {
+      await fetch('/api/friends/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ requesterUsername })
+      });
+      loadMyData();
+    }
+
+    function openCreateGroupModal() {
+      const checklist = document.getElementById('friendsChecklist');
+      checklist.innerHTML = myData.friends.length === 0 ? 'Добавьте друзей' : '';
+      myData.friends.forEach(f => {
+        const label = document.createElement('label');
+        label.style.display = 'flex'; label.style.gap = '8px';
+        label.innerHTML = `<input type="checkbox" value="${f.username}"> ${f.username}`;
+        checklist.appendChild(label);
+      });
+      toggleModal('createGroupModal', true);
+    }
+
+    async function submitCreateGroup() {
+      const groupName = document.getElementById('groupNameInput').value.trim();
+      if (!groupName) return alert('Введите название');
+      const checked = Array.from(document.querySelectorAll('#friendsChecklist input:checked')).map(cb => cb.value);
+
+      const res = await fetch('/api/groups/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ groupName, memberUsernames: checked })
+      });
+      if (res.ok) {
+        toggleModal('createGroupModal', false);
+        document.getElementById('groupNameInput').value = '';
+        await loadMyData();
+      }
     }
 
     function openChat(chat) {
@@ -354,41 +575,64 @@
       document.getElementById('chatHeader').style.display = 'flex';
       document.getElementById('messagesArea').style.display = 'flex';
       document.getElementById('chatForm').style.display = 'flex';
-      document.getElementById('activeChatName').innerHTML = `${chat.name}${chat.isAdmin ? adminCheckmarkSVG : ''}`;
+
+      document.getElementById('activeChatName').innerHTML = `${chat.name} ${chat.isAdmin ? adminCheckmarkSVG : ''}`;
+      document.getElementById('activeChatSub').textContent = 
+        chat.type === 'saved' ? 'Ваши заметки' :
+        (chat.type === 'suggestions' ? 'Идеи' : (chat.type === 'dm' ? 'Личный чат' : 'Группа'));
+
+      document.getElementById('groupSettingsBtn').style.display = chat.type === 'group' ? 'block' : 'none';
+
+      const avatarHeader = document.getElementById('activeChatAvatar');
+      if (chat.type === 'saved') {
+        avatarHeader.outerHTML = `<div id="activeChatAvatar" class="avatar" style="background:var(--primary-gradient)">⭐</div>`;
+      } else if (chat.type === 'suggestions') {
+        avatarHeader.outerHTML = `<div id="activeChatAvatar" class="avatar" style="background:linear-gradient(135deg, #ff9800, #b83bde)">💡</div>`;
+      } else if (chat.avatar) {
+        avatarHeader.outerHTML = `<img id="activeChatAvatar" class="avatar" src="${chat.avatar}">`;
+      } else {
+        avatarHeader.outerHTML = `<div id="activeChatAvatar" class="avatar">${chat.name[0].toUpperCase()}</div>`;
+      }
+
       document.getElementById('messagesArea').innerHTML = '';
       socket.emit('join_room', { token: currentUser.token, chatType: chat.type, targetId: chat.id });
     }
 
-    // Выделение и Панель выделения (Edit перенесен сюда)
+    // Выделение сообщений
     function toggleSelectMessage(msgId) {
-      if (selectedMsgIds.has(msgId)) selectedMsgIds.delete(msgId);
-      else selectedMsgIds.add(msgId);
+      if (selectedMsgIds.has(msgId)) {
+        selectedMsgIds.delete(msgId);
+      } else {
+        selectedMsgIds.add(msgId);
+      }
       updateSelectionUI();
     }
 
     function updateSelectionUI() {
       const bar = document.getElementById('selectionBar');
       const count = document.getElementById('selectedCount');
-      const editBtn = document.getElementById('editSelectedBtn');
+      const editBtn = document.getElementById('editSelectedBtn'); // Изменение 4
 
       if (selectedMsgIds.size > 0) {
         bar.style.display = 'flex';
         count.textContent = selectedMsgIds.size;
 
-        // Показать "Редактировать", только если выбрано ОДНО СОБСТВЕННОЕ сообщение
+        // Изменение 4: Показываем кнопку редактирования, только если выбрано 1 сообщение и оно наше
         if (selectedMsgIds.size === 1) {
-            const selectedId = Array.from(selectedMsgIds)[0];
-            const msg = currentHistory.find(m => m.id === selectedId);
-            if (msg && msg.sender === currentUser.username) {
-                editBtn.style.display = 'inline-block';
-            } else {
-                editBtn.style.display = 'none';
-            }
-        } else {
+          const firstId = selectedMsgIds.values().next().value;
+          const msg = currentHistory.find(m => m.id === firstId);
+          if (msg && msg.sender === currentUser.username) {
+            editBtn.style.display = 'block';
+          } else {
             editBtn.style.display = 'none';
+          }
+        } else {
+          editBtn.style.display = 'none';
         }
+
       } else {
         bar.style.display = 'none';
+        editBtn.style.display = 'none';
       }
       renderMessagesHistory(currentHistory);
     }
@@ -398,28 +642,96 @@
       updateSelectionUI();
     }
 
-    function editSelectedMessage() {
-        if (selectedMsgIds.size !== 1) return;
-        const selectedId = Array.from(selectedMsgIds)[0];
-        const msg = currentHistory.find(m => m.id === selectedId);
-        if (msg && msg.sender === currentUser.username) {
-            startEdit(msg);
-            clearSelection(); // Убрать выделение после начала редактирования
-        }
+    function copySelectedMessages() {
+      const selectedMsgs = currentHistory.filter(m => selectedMsgIds.has(m.id));
+      const textToCopy = selectedMsgs.map(m => `${m.sender}: ${m.text}`).join('\n');
+      navigator.clipboard.writeText(textToCopy);
+      alert('Скопировано');
+      clearSelection();
     }
 
-    // Редактирование, Ответить, Эмодзи
+    // Изменение 4: Функция для начала редактирования из верхней панели
+    function editSelectedMessage() {
+      if (selectedMsgIds.size !== 1) return;
+      const firstId = selectedMsgIds.values().next().value;
+      const msg = currentHistory.find(m => m.id === firstId);
+      if (msg && msg.sender === currentUser.username) {
+        clearSelection(); // Очищаем выделение перед редактированием
+        startEdit(msg);
+      }
+    }
+
+    function deleteSelectedMessages() {
+      if (!activeChat) return;
+      socket.emit('delete_messages', {
+        token: currentUser.token,
+        chatType: activeChat.type,
+        targetId: activeChat.id,
+        messageIds: Array.from(selectedMsgIds)
+      });
+      clearSelection();
+    }
+
+    function openForwardModal() {
+      if (selectedMsgIds.size === 0) return;
+      const list = document.getElementById('forwardChatsList');
+      list.innerHTML = '';
+
+      // Избранное
+      const fSaved = document.createElement('button');
+      fSaved.className = 'secondary';
+      fSaved.textContent = '⭐ Избранное';
+      fSaved.onclick = () => executeForward('saved', 'saved');
+      list.appendChild(fSaved);
+
+      // Друзья
+      myData.friends.forEach(f => {
+        const btn = document.createElement('button');
+        btn.className = 'secondary';
+        btn.textContent = `👤 ${f.username}`;
+        btn.onclick = () => executeForward('dm', f.username);
+        list.appendChild(btn);
+      });
+
+      // Группы
+      myData.groups.forEach(g => {
+        const btn = document.createElement('button');
+        btn.className = 'secondary';
+        btn.textContent = `👥 ${g.name}`;
+        btn.onclick = () => executeForward('group', g.id);
+        list.appendChild(btn);
+      });
+
+      toggleModal('forwardModal', true);
+    }
+
+    function executeForward(destChatType, destTargetId) {
+      const selectedMsgs = currentHistory.filter(m => selectedMsgIds.has(m.id));
+      socket.emit('forward_messages', {
+        token: currentUser.token,
+        destChatType,
+        destTargetId,
+        messages: selectedMsgs
+      });
+      toggleModal('forwardModal', false);
+      clearSelection();
+      alert('Переслано!');
+    }
+
+    // Редактирование и Ответ
     function startReply(msg) {
       replyToMsg = msg;
       editingMsgId = null;
-      document.getElementById('actionPreviewText').innerHTML = `Ответ пользователю <b>${msg.sender}</b>: "${msg.text.slice(0, 30)}"`;
+      document.getElementById('actionPreviewText').innerHTML = `Ответ <b>${msg.sender}</b>: "${msg.text.slice(0, 30)}..."`;
       document.getElementById('actionPreviewBar').style.display = 'flex';
+      // Скроллим вниз к вводу
+      document.getElementById('msgInput').focus();
     }
 
     function startEdit(msg) {
       editingMsgId = msg.id;
       replyToMsg = null;
-      document.getElementById('actionPreviewText').innerHTML = `Редактирование: "${msg.text.slice(0, 30)}"`;
+      document.getElementById('actionPreviewText').innerHTML = `Редактирование: "${msg.text.slice(0, 30)}..."`;
       document.getElementById('actionPreviewBar').style.display = 'flex';
       document.getElementById('msgInput').value = msg.text;
       document.getElementById('sendBtn').textContent = 'Сохранить';
@@ -435,22 +747,294 @@
 
     function toggleReaction(msgId, emoji) {
       if (!activeChat) return;
-      socket.emit('toggle_reaction', { token: currentUser.token, chatType: activeChat.type, targetId: activeChat.id, messageId: msgId, emoji });
+      socket.emit('toggle_reaction', {
+        token: currentUser.token,
+        chatType: activeChat.type,
+        targetId: activeChat.id,
+        messageId: msgId,
+        emoji
+      });
     }
 
-    // Отрисовка истории (Перенос Ответить, Edit, Copy убраны)
+    // Отправка
+    function handleSendMsg(e) {
+      e.preventDefault();
+      const input = document.getElementById('msgInput');
+      const text = input.value.trim();
+
+      if (editingMsgId) {
+        if (text) {
+          socket.emit('edit_message', {
+            token: currentUser.token,
+            chatType: activeChat.type,
+            targetId: activeChat.id,
+            messageId: editingMsgId,
+            newText: text
+          });
+          cancelActionPreview();
+        }
+        return;
+      }
+
+      if ((text || selectedImageBase64) && activeChat) {
+        socket.emit('send_message', {
+          token: currentUser.token,
+          chatType: activeChat.type,
+          targetId: activeChat.id,
+          text: text,
+          image: selectedImageBase64,
+          replyTo: replyToMsg ? { id: replyToMsg.id, sender: replyToMsg.sender, text: replyToMsg.text } : null
+        });
+        input.value = '';
+        cancelImage();
+        cancelActionPreview();
+      }
+    }
+
+    socket.on('chat_history', (history) => {
+      currentHistory = history;
+      renderMessagesHistory(history);
+    });
+
+    socket.on('new_message', (msg) => appendMessage(msg));
+    socket.on('error_msg', (data) => alert(data.error));
+
+    // Изменение 4/5: Обновленный рендер сообщений
     function renderMessagesHistory(history) {
       const area = document.getElementById('messagesArea');
       area.innerHTML = '';
-      history.forEach(msg => {
-        const isMe = msg.sender === currentUser.username;
-        const isSelected = selectedMsgIds.has(msg.id);
+      history.forEach(appendMessageToArea);
+      area.scrollTop = area.scrollHeight;
+    }
 
-        const row = document.createElement('div');
-        row.className = `message-row ${isMe ? 'sent' : 'received'} ${isSelected ? 'selected' : ''}`;
-        row.onclick = (e) => {
-          if (e.target.closest('.msg-actions') || e.target.closest('.reaction-btn') || e.target.closest('.bubble-reply-btn')) return;
-          toggleSelectMessage(msg.id);
+    function appendMessage(msg) {
+      currentHistory.push(msg);
+      appendMessageToArea(msg);
+      const area = document.getElementById('messagesArea');
+      area.scrollTop = area.scrollHeight;
+    }
+
+    // Изменение 4/5: Основная логика рендера пузыря
+    function appendMessageToArea(msg) {
+      const area = document.getElementById('messagesArea');
+      const isMe = msg.sender === currentUser.username;
+      const isSelected = selectedMsgIds.has(msg.id);
+
+      const row = document.createElement('div');
+      row.className = `message-row ${isMe ? 'sent' : 'received'} ${isSelected ? 'selected' : ''}`;
+      row.onclick = (e) => {
+        // Изменение 4/5: Игнорируем клик, если нажали на реакцию или кнопку ответа
+        if (e.target.closest('.msg-corner-reply') || e.target.closest('.reaction-btn') || e.target.closest('.msg-actions')) return;
+        toggleSelectMessage(msg.id);
+      };
+
+      const avatarHTML = msg.avatar 
+        ? `<img class="avatar" style="width:30px; height:30px;" src="${msg.avatar}">`
+        : `<div class="avatar" style="width:30px; height:30px; font-size:0.8rem;">${msg.sender[0].toUpperCase()}</div>`;
+
+      const imgHTML = msg.image ? `<img class="message-img" src="${msg.image}">` : '';
+      const replyHTML = msg.replyTo ? `<div class="reply-quote"><b>${msg.replyTo.sender}:</b> ${msg.replyTo.text}</div>` : '';
+
+      // Реакции
+      let reactionsHTML = '';
+      if (msg.reactions && Object.keys(msg.reactions).length > 0) {
+        reactionsHTML = '<div class="reactions-bar">';
+        for (const [emoji, usersArr] of Object.entries(msg.reactions)) {
+          if (usersArr.length > 0) {
+            const hasMy = usersArr.includes(currentUser.username);
+            reactionsHTML += `<button class="reaction-btn ${hasMy ? 'active' : ''}" onclick="toggleReaction(${msg.id}, '${emoji}')">${emoji} ${usersArr.length}</button>`;
+          }
+        }
+        reactionsHTML += '</div>';
+      }
+
+      // Панель эмодзи (при наведении)
+      // Изменение 4: Убраны кнопки Копировать и Редактировать из панели эмодзи
+      const actionsHTML = `
+        <div class="msg-actions">
+          ${EMOJIS.map(e => `<button class="msg-action-btn" onclick="toggleReaction(${msg.id}, '${e}')">${e}</button>`).join('')}
+        </div>
+      `;
+
+      // Изменение 5: Кнопка Ответить (↩) в верхнем правом углу пузыря сообщения
+      const cornerReplyHTML = `<button class="msg-corner-reply" title="Ответить" onclick="startReply(${JSON.stringify(msg).replace(/"/g, '&quot;')})">↩</button>`;
+
+      row.innerHTML = `
+        ${actionsHTML}
+        ${avatarHTML}
+        <div class="message-bubble">
+          ${cornerReplyHTML}
+          <div class="message-sender">${msg.sender} ${msg.isAdmin ? adminCheckmarkSVG : ''}</div>
+          ${replyHTML}
+          <div>${msg.text}</div>
+          ${imgHTML}
+          ${reactionsHTML}
+          <div class="message-time">
+            ${msg.edited ? '<span style="font-size:0.6rem; opacity:0.6;">(изм.)</span>' : ''}
+            ${msg.time}
+          </div>
+        </div>
+      `;
+
+      area.appendChild(row);
+    }
+
+    function handleMsgPhoto(input) {
+      const file = input.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          selectedImageBase64 = e.target.result;
+          document.getElementById('imgPreview').src = selectedImageBase64;
+          document.getElementById('imgPreviewBar').style.display = 'flex';
         };
+        reader.readAsDataURL(file);
+      }
+    }
 
-        const replyHTML = msg.replyTo ? `<div class="reply-quote"><b>${msg.replyTo.sender}:</b>${msg.replyTo.text}http://googleusercontent.com/image_generation_content/0
+    function cancelImage() {
+      selectedImageBase64 = null;
+      document.getElementById('imgPreviewBar').style.display = 'none';
+      document.getElementById('msgPhotoInput').value = '';
+    }
+
+    async function openGroupSettings() {
+      if (!activeChat || activeChat.type !== 'group') return;
+      const group = myData.groups.find(g => g.id === activeChat.id);
+      if (!group) return;
+
+      document.getElementById('editGroupNameInput').value = group.name;
+      document.getElementById('founderRenameSection').style.display = group.isFounder ? 'block' : 'none';
+      document.getElementById('deleteGroupBtn').style.display = group.isFounder ? 'block' : 'none';
+
+      const select = document.getElementById('addMemberSelect');
+      select.innerHTML = '';
+      const nonMembers = myData.friends.filter(f => !group.members.some(m => m.username === f.username));
+      nonMembers.forEach(f => { select.innerHTML += `<option value="${f.username}">${f.username}</option>`; });
+
+      const mList = document.getElementById('groupMembersList');
+      mList.innerHTML = '';
+      group.members.forEach(m => {
+        const div = document.createElement('div');
+        div.className = 'member-item';
+        div.innerHTML = `
+          <span>${m.username} ${m.isFounder ? '<span class="founder-badge">Founder</span>' : ''}</span>
+          ${group.isFounder && !m.isFounder ? `<button onclick="removeMember('${m.username}')" style="padding:2px 6px; font-size:0.7rem; background:#d32f2f;">Удалить</button>` : ''}
+        `;
+        mList.appendChild(div);
+      });
+
+      toggleModal('groupSettingsModal', true);
+    }
+
+    async function renameGroup() {
+      const newName = document.getElementById('editGroupNameInput').value.trim();
+      const res = await fetch('/api/groups/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ groupId: activeChat.id, newName })
+      });
+      if (res.ok) { toggleModal('groupSettingsModal', false); await loadMyData(); }
+      else { const d = await res.json(); alert(d.error); }
+    }
+
+    async function addMemberToGroup() {
+      const username = document.getElementById('addMemberSelect').value;
+      if (!username) return;
+      const res = await fetch('/api/groups/add-member', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ groupId: activeChat.id, targetUsername: username })
+      });
+      if (res.ok) { openGroupSettings(); await loadMyData(); }
+    }
+
+    async function removeMember(targetUsername) {
+      const res = await fetch('/api/groups/remove-member', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ groupId: activeChat.id, targetUsername })
+      });
+      if (res.ok) { openGroupSettings(); await loadMyData(); }
+      else { const d = await res.json(); alert(d.error); }
+    }
+
+    async function leaveGroup() {
+      const res = await fetch('/api/groups/leave', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ groupId: activeChat.id })
+      });
+      if (res.ok) {
+        toggleModal('groupSettingsModal', false);
+        activeChat = null;
+        document.getElementById('chatHeader').style.display = 'none';
+        document.getElementById('messagesArea').style.display = 'none';
+        document.getElementById('chatForm').style.display = 'none';
+        document.getElementById('emptyState').style.display = 'flex';
+        await loadMyData();
+      } else { const d = await res.json(); alert(d.error); }
+    }
+
+    async function deleteGroup() {
+      if (!confirm('Удалить группу?')) return;
+      const res = await fetch('/api/groups/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ groupId: activeChat.id })
+      });
+      if (res.ok) {
+        toggleModal('groupSettingsModal', false);
+        activeChat = null;
+        document.getElementById('chatHeader').style.display = 'none';
+        document.getElementById('messagesArea').style.display = 'none';
+        document.getElementById('chatForm').style.display = 'none';
+        document.getElementById('emptyState').style.display = 'flex';
+        await loadMyData();
+      } else { const d = await res.json(); alert(d.error); }
+    }
+
+    async function saveSettings() {
+      const newPassword = document.getElementById('setPass').value.trim();
+      const dob = document.getElementById('setDob').value;
+
+      // Изменение 3: Проверка длины пароля в настройках на клиенте
+      if (newPassword && (newPassword.length < 4 || newPassword.length > 20)) {
+        return alert('Длина пароля должна быть от 4 до 20 символов');
+      }
+
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ avatar: tempAvatarBase64 || currentUser.avatar, newPassword, dob })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        currentUser.avatar = data.avatar;
+        localStorage.setItem('wallchat_user', JSON.stringify(currentUser));
+        toggleModal('settingsModal', false);
+        loadMyData();
+      } else {
+        const data = await res.json();
+        alert(data.error);
+      }
+    }
+
+    function logout() {
+      localStorage.removeItem('wallchat_user');
+      currentUser = null;
+      document.getElementById('appContainer').classList.remove('active');
+      document.getElementById('authScreen').classList.add('active');
+      toggleModal('settingsModal', false);
+    }
+
+    function initApp() {
+      document.getElementById('authScreen').classList.remove('active');
+      document.getElementById('appContainer').classList.add('active');
+      loadMyData();
+    }
+
+    if (currentUser) initApp();
+  </script>
+</body>
+</html>

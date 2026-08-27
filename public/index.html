@@ -78,7 +78,6 @@
     .message-row:hover .msg-actions { display: flex; }
     .msg-action-btn { background: none; border: none; cursor: pointer; padding: 2px; font-size: 0.85rem; }
 
-    /* Изменение 5: Стиль для кнопки Ответить в углу сообщения */
     .msg-corner-reply {
       display: none;
       position: absolute;
@@ -105,6 +104,9 @@
     .photo-btn { cursor: pointer; padding: 8px 12px; background: #242f3d; border-radius: 8px; font-size: 1.2rem; }
 
     .action-preview-bar { display: none; padding: 8px 14px; background: #121921; border-top: 1px solid var(--border-color); justify-content: space-between; align-items: center; font-size: 0.85rem; }
+
+    .img-preview-bar { display: none; padding: 8px 14px; background: #121921; border-top: 1px solid var(--border-color); justify-content: space-between; align-items: center; font-size: 0.85rem; }
+    .img-preview-bar img { height: 40px; border-radius: 4px; }
 
     .empty-chat-state { flex: 1; display: flex; justify-content: center; align-items: center; color: #8e949a; }
     .member-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-color); }
@@ -156,7 +158,7 @@
 
     <div id="userSuggestionsBox" style="border-top: 1px solid var(--border-color); pt-10; margin-top:8px; padding-top:10px;">
       <div style="font-weight:bold; font-size:0.85rem; margin-bottom:4px; color:#b83bde;">Предложения по улучшению</div>
-      <div style="font-size:0.75rem; color:#8e949a; margin-bottom:6px;">Отправьте сообщение администратору</div>
+      <div style="font-size:0.75rem; color:#8e949a; margin-bottom:6px;">Отправьте сообщение heawyrt и w1len:</div>
       <textarea id="suggestionInput" rows="2" placeholder="Ваши идеи..." style="width:100%; font-size:0.85rem; margin-bottom:6px;"></textarea>
       <button onclick="sendUserSuggestion()" style="width:100%; padding:6px;">Отправить</button>
     </div>
@@ -165,7 +167,7 @@
     <button class="secondary" onclick="toggleModal('settingsModal', false)">Закрыть</button>
     <button class="secondary" style="background:#d32f2f" onclick="logout()">Выйти</button>
 
-    <div style="text-align: center; color: #8e949a; font-size: 0.8rem; margin-top: 8px;">Версия 1.5.0</div>
+    <div style="text-align: center; color: #8e949a; font-size: 0.8rem; margin-top: 8px;">Версия 1.2.0</div>
   </div>
 
   <div id="forwardModal" class="modal">
@@ -217,7 +219,10 @@
           <span id="myName">User</span>
           <span id="myAdminBadge"></span>
         </div>
-        <button class="secondary" style="padding:6px 10px; font-size:0.8rem;" onclick="toggleModal('settingsModal', true)">⚙</button>
+        <div style="display:flex; gap:6px;">
+          <button class="secondary" style="padding:6px 10px; font-size:0.8rem;" onclick="openCreateGroupModal()" title="Создать группу">+</button>
+          <button class="secondary" style="padding:6px 10px; font-size:0.8rem;" onclick="toggleModal('settingsModal', true)">⚙</button>
+        </div>
       </div>
 
       <div class="nav-tabs">
@@ -234,7 +239,6 @@
           <input type="text" id="addFriendName" placeholder="Никнейм друга" style="font-size:0.85rem;">
           <button onclick="sendFriendRequest()" style="padding:8px 12px;">+</button>
         </div>
-        <button onclick="openCreateGroupModal()" style="margin-top:6px;" class="secondary">+ Создать группу</button>
         <div style="font-size:0.8rem; color:#8e949a; margin-top:10px;">ЗАЯВКИ В ДРУЗЬЯ</div>
         <div id="requestsList"></div>
         <div style="font-size:0.8rem; color:#8e949a; margin-top:10px;">МОИ ДРУЗЬЯ</div>
@@ -343,7 +347,6 @@
       const dob = document.getElementById('authDob').value;
       if (!username || !password) return alert('Заполните поля');
 
-      // Изменение 3: Проверка длины пароля (4-20) на клиенте
       if (authMode === 'reg' && (password.length < 4 || password.length > 20)) {
         return alert('Длина пароля должна быть от 4 до 20 символов');
       }
@@ -369,7 +372,6 @@
       if (res.ok) {
         myData = await res.json();
         
-        // Изменение 2: Скрытие предложений для heawyrt и w1len
         if (currentUser.isAdmin) {
           document.getElementById('userSuggestionsBox').style.display = 'none';
         } else {
@@ -413,7 +415,7 @@
       `;
       chatsList.appendChild(savedItem);
 
-      // 2. Предложка (Только для админов heawyrt и w1len)
+      // 2. Предложка
       if (currentUser.isAdmin) {
         const suggItem = document.createElement('div');
         suggItem.className = `chat-item ${activeChat?.type === 'suggestions' ? 'active' : ''}`;
@@ -611,13 +613,12 @@
     function updateSelectionUI() {
       const bar = document.getElementById('selectionBar');
       const count = document.getElementById('selectedCount');
-      const editBtn = document.getElementById('editSelectedBtn'); // Изменение 4
+      const editBtn = document.getElementById('editSelectedBtn');
 
       if (selectedMsgIds.size > 0) {
         bar.style.display = 'flex';
         count.textContent = selectedMsgIds.size;
 
-        // Изменение 4: Показываем кнопку редактирования, только если выбрано 1 сообщение и оно наше
         if (selectedMsgIds.size === 1) {
           const firstId = selectedMsgIds.values().next().value;
           const msg = currentHistory.find(m => m.id === firstId);
@@ -650,13 +651,12 @@
       clearSelection();
     }
 
-    // Изменение 4: Функция для начала редактирования из верхней панели
     function editSelectedMessage() {
       if (selectedMsgIds.size !== 1) return;
       const firstId = selectedMsgIds.values().next().value;
       const msg = currentHistory.find(m => m.id === firstId);
       if (msg && msg.sender === currentUser.username) {
-        clearSelection(); // Очищаем выделение перед редактированием
+        clearSelection();
         startEdit(msg);
       }
     }
@@ -724,7 +724,6 @@
       editingMsgId = null;
       document.getElementById('actionPreviewText').innerHTML = `Ответ <b>${msg.sender}</b>: "${msg.text.slice(0, 30)}..."`;
       document.getElementById('actionPreviewBar').style.display = 'flex';
-      // Скроллим вниз к вводу
       document.getElementById('msgInput').focus();
     }
 
@@ -799,7 +798,6 @@
     socket.on('new_message', (msg) => appendMessage(msg));
     socket.on('error_msg', (data) => alert(data.error));
 
-    // Изменение 4/5: Обновленный рендер сообщений
     function renderMessagesHistory(history) {
       const area = document.getElementById('messagesArea');
       area.innerHTML = '';
@@ -814,7 +812,6 @@
       area.scrollTop = area.scrollHeight;
     }
 
-    // Изменение 4/5: Основная логика рендера пузыря
     function appendMessageToArea(msg) {
       const area = document.getElementById('messagesArea');
       const isMe = msg.sender === currentUser.username;
@@ -823,7 +820,6 @@
       const row = document.createElement('div');
       row.className = `message-row ${isMe ? 'sent' : 'received'} ${isSelected ? 'selected' : ''}`;
       row.onclick = (e) => {
-        // Изменение 4/5: Игнорируем клик, если нажали на реакцию или кнопку ответа
         if (e.target.closest('.msg-corner-reply') || e.target.closest('.reaction-btn') || e.target.closest('.msg-actions')) return;
         toggleSelectMessage(msg.id);
       };
@@ -848,15 +844,12 @@
         reactionsHTML += '</div>';
       }
 
-      // Панель эмодзи (при наведении)
-      // Изменение 4: Убраны кнопки Копировать и Редактировать из панели эмодзи
       const actionsHTML = `
         <div class="msg-actions">
           ${EMOJIS.map(e => `<button class="msg-action-btn" onclick="toggleReaction(${msg.id}, '${e}')">${e}</button>`).join('')}
         </div>
       `;
 
-      // Изменение 5: Кнопка Ответить (↩) в верхнем правом углу пузыря сообщения
       const cornerReplyHTML = `<button class="msg-corner-reply" title="Ответить" onclick="startReply(${JSON.stringify(msg).replace(/"/g, '&quot;')})">↩</button>`;
 
       row.innerHTML = `
@@ -998,7 +991,6 @@
       const newPassword = document.getElementById('setPass').value.trim();
       const dob = document.getElementById('setDob').value;
 
-      // Изменение 3: Проверка длины пароля в настройках на клиенте
       if (newPassword && (newPassword.length < 4 || newPassword.length > 20)) {
         return alert('Длина пароля должна быть от 4 до 20 символов');
       }

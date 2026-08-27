@@ -7,84 +7,122 @@
   <style>
     :root {
       --primary-gradient: linear-gradient(135deg, #b83bde, #3558d0);
-      --bg-color: #0a0e14;
-      --panel-bg: #121921;
-      --border-color: #1e2631;
+      --bg-color: #0e1621;
+      --panel-bg: #17212b;
+      --border-color: #242f3d;
       --text-color: #ffffff;
       --msg-out: #3558d0;
       --msg-in: #182533;
-      --input-bg: #1d2633;
+      --input-bg: #242f3d;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
-    body { background: var(--bg-color); color: var(--text-color); display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    body { background: var(--bg-color); color: var(--text-color); display: flex; flex-direction: column; height: 100vh; justify-content: center; align-items: center; }
 
-    .app-main-title { background: var(--primary-gradient); padding: 8px; text-align: center; font-weight: bold; font-size: 1.1rem; letter-spacing: 0.5px; border-bottom: 1px solid var(--border-color); flex-shrink: 0; }
-    .app-container { width: 100%; max-width: 1100px; height: 100%; margin: 0 auto; background: var(--panel-bg); display: none; overflow: hidden; border-left: 1px solid var(--border-color); border-right: 1px solid var(--border-color); }
+    /* Название мессенджера сверху */
+    .wallchat-top-header {
+      font-size: 1.8rem;
+      font-weight: 800;
+      background: var(--primary-gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 10px;
+      letter-spacing: 1px;
+    }
+
+    .auth-screen, .modal { display: none; width: 100%; max-width: 450px; background: var(--panel-bg); padding: 24px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); position: absolute; z-index: 10; }
+    .auth-screen.active, .modal.active { display: flex; flex-direction: column; gap: 14px; }
+
+    .app-container { width: 100%; max-width: 1000px; height: 85vh; background: var(--panel-bg); border-radius: 12px; display: none; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
     .app-container.active { display: flex; }
 
-    .sidebar { width: 320px; background: #0c1218; border-right: 1px solid var(--border-color); display: flex; flex-direction: column; }
-    .nav-tabs { display: flex; background: #090d11; border-bottom: 1px solid var(--border-color); }
-    .nav-tab { flex: 1; padding: 12px; text-align: center; cursor: pointer; font-size: 0.85rem; font-weight: bold; color: #8e949a; }
-    .nav-tab.active { color: #fff; border-bottom: 2px solid #b83bde; }
-    .tab-content { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+    .sidebar { width: 320px; background: #121921; border-right: 1px solid var(--border-color); display: flex; flex-direction: column; }
+    .sidebar-header { background: var(--primary-gradient); padding: 14px; display: flex; justify-content: space-between; align-items: center; }
+    .user-info { display: flex; align-items: center; gap: 8px; font-weight: bold; cursor: pointer; }
 
-    .chat-item { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 8px; cursor: pointer; transition: background 0.15s; position: relative; }
-    .chat-item:hover, .chat-item.active { background: #1a232f; }
+    .nav-tabs { display: flex; background: #0e1621; border-bottom: 1px solid var(--border-color); }
+    .nav-tab { flex: 1; padding: 10px; text-align: center; cursor: pointer; font-size: 0.85rem; font-weight: bold; color: #8e949a; border-bottom: 2px solid transparent; }
+    .nav-tab.active { color: #fff; border-bottom-color: #b83bde; }
+
+    .tab-content { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .chat-item { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; cursor: pointer; transition: background 0.2s; }
+    .chat-item:hover, .chat-item.active { background: #242f3d; }
+    .chat-item .info { flex: 1; overflow: hidden; }
     .chat-item .name { font-weight: bold; display: flex; align-items: center; gap: 4px; }
-    .admin-badge { display: inline-flex; align-items: center; color: #b83bde; margin-left: 2px; }
-    .admin-badge svg { width: 14px; height: 14px; fill: currentColor; }
-    .avatar { width: 42px; height: 42px; border-radius: 50%; object-fit: cover; background: #3558d0; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0; }
-    .founder-badge { font-size: 0.7rem; color: #b83bde; background: rgba(184, 59, 222, 0.15); padding: 2px 6px; border-radius: 4px; font-weight: normal; margin-left: 4px; }
 
-    .chat-main { flex: 1; display: flex; flex-direction: column; background: #0f151c; }
-    .chat-header { padding: 14px 20px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 10px; font-weight: bold; background: #0c1218; }
+    .admin-badge { display: inline-flex; align-items: center; color: #b83bde; }
+    .admin-badge svg { width: 16px; height: 16px; }
+
+    .founder-badge { background: linear-gradient(135deg, #b83bde, #3558d0); color: #fff; font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; font-weight: bold; }
+
+    .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: #3558d0; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0; }
+
+    .chat-main { flex: 1; display: flex; flex-direction: column; background: var(--panel-bg); }
+    .chat-header { padding: 14px 20px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; background: #121921; }
     .messages-area { flex: 1; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+
     .message-row { display: flex; gap: 8px; align-items: flex-end; }
-    .message-bubble { max-width: 65%; padding: 10px 14px; border-radius: 12px; background: var(--msg-in); word-break: break-word; }
     .message-row.sent { flex-direction: row-reverse; }
+    .message-bubble { max-width: 65%; padding: 10px 14px; border-radius: 12px; word-break: break-word; background: var(--msg-in); }
     .message-row.sent .message-bubble { background: var(--msg-out); }
-    .input-area { display: flex; align-items: center; padding: 12px; gap: 8px; border-top: 1px solid var(--border-color); background: #0c1218; }
-    
+    .message-sender { font-size: 0.75rem; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 4px; color: #a2b4c7; }
+    .message-img { max-width: 100%; max-height: 250px; border-radius: 8px; margin-top: 6px; display: block; }
+    .message-time { font-size: 0.65rem; opacity: 0.7; text-align: right; margin-top: 4px; }
+
+    .input-area { display: flex; align-items: center; padding: 12px; background: #0e1621; gap: 8px; border-top: 1px solid var(--border-color); }
     input, button { padding: 10px 14px; border: none; border-radius: 8px; outline: none; }
     input { background: var(--input-bg); color: #fff; flex: 1; }
     button { background: var(--primary-gradient); color: #fff; font-weight: bold; cursor: pointer; }
     button.secondary { background: #242f3d; }
+    .photo-btn { cursor: pointer; padding: 8px 12px; background: #242f3d; border-radius: 8px; font-size: 1.2rem; }
 
-    .auth-screen, .modal { display: none; width: 100%; max-width: 450px; background: var(--panel-bg); padding: 24px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); position: absolute; z-index: 10; left: 50%; top: 50%; transform: translate(-50%, -50%); flex-direction: column; gap: 14px; }
-    .auth-screen.active, .modal.active { display: flex; }
-    .overlay { display: none; position: absolute; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.6); z-index: 9; }
-    .overlay.active { display: block; }
+    .img-preview-bar { display: none; padding: 8px; background: #121921; align-items: center; gap: 10px; }
+    .img-preview-bar img { height: 50px; border-radius: 6px; }
+
+    .empty-chat-state { flex: 1; display: flex; justify-content: center; align-items: center; color: #8e949a; }
+    .member-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-color); }
   </style>
 </head>
 <body>
 
-  <div class="app-main-title">wallchat</div>
-  <div id="overlay" class="overlay"></div>
+  <!-- Заголовок Wallchat над всем интерфейсом -->
+  <div class="wallchat-top-header">WALLCHAT</div>
 
-  <!-- Авторизация -->
+  <!-- Экран Входа / Регистрации -->
   <div id="authScreen" class="auth-screen active">
-    <h2 style="text-align:center;">Вход в Wallchat</h2>
+    <h2 style="text-align:center;">Добро пожаловать</h2>
     <div style="display:flex; gap:8px;">
       <button id="tabLogin" style="flex:1" onclick="switchAuthTab('login')">Вход</button>
       <button id="tabReg" style="flex:1" class="secondary" onclick="switchAuthTab('reg')">Регистрация</button>
     </div>
+    <div id="regAvatarBox" style="display:none; text-align:center;">
+      <label for="regAvatarInput" style="cursor:pointer;">
+        <img id="regAvatarPreview" class="avatar" style="width:70px; height:70px; margin:auto;" src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>" alt="+">
+        <div style="font-size:0.8rem; color:#b83bde; margin-top:4px;">Выбрать аватар из галереи</div>
+      </label>
+      <input type="file" id="regAvatarInput" accept="image/*" style="display:none" onchange="loadPreview(this, 'regAvatarPreview')">
+    </div>
     <input type="text" id="authName" placeholder="Имя пользователя">
     <input type="password" id="authPass" placeholder="Пароль">
-    
-    <div id="regBirthdayBox" style="display:none">
-      <label style="font-size:0.85rem; color:#8e949a; margin-bottom:4px; display:block">Дата рождения</label>
-      <input type="date" id="authBirthday" style="width:100%">
+    <div id="regDobBox" style="display:none;">
+      <label style="font-size:0.8rem; color:#8e949a;">Дата рождения:</label>
+      <input type="date" id="authDob" style="width:100%; margin-top:4px;">
     </div>
-
     <button onclick="submitAuth()">Продолжить</button>
   </div>
 
-  <!-- Настройки -->
+  <!-- Окно Настроек профиля -->
   <div id="settingsModal" class="modal">
     <h2>Настройки профиля</h2>
+    <div style="text-align:center;">
+      <label for="setAvatarInput" style="cursor:pointer;">
+        <img id="setAvatarPreview" class="avatar" style="width:80px; height:80px; margin:auto;" src="" alt="Avatar">
+        <div style="font-size:0.85rem; color:#b83bde; margin-top:4px;">Сменить аватар</div>
+      </label>
+      <input type="file" id="setAvatarInput" accept="image/*" style="display:none" onchange="loadPreview(this, 'setAvatarPreview')">
+    </div>
     <div>
-      <label style="font-size:0.85rem; color:#8e949a;">Дата рождения</label>
-      <input type="date" id="setBirthday" style="width:100%; margin-top:4px;">
+      <label style="font-size:0.8rem; color:#8e949a;">Дата рождения:</label>
+      <input type="date" id="setDob" style="width:100%; margin-top:4px;">
     </div>
     <input type="password" id="setPass" placeholder="Новый пароль (опционально)">
     <button onclick="saveSettings()">Сохранить</button>
@@ -92,31 +130,50 @@
     <button class="secondary" style="background:#d32f2f" onclick="logout()">Выйти</button>
   </div>
 
-  <!-- Управление группой -->
-  <div id="groupSettingsModal" class="modal" style="max-width: 500px;">
+  <!-- Настройки группы -->
+  <div id="groupSettingsModal" class="modal">
     <h2>Управление группой</h2>
-    <input type="text" id="groupSetNameInput" placeholder="Название группы">
-    <div style="font-size:0.9rem; margin-top:6px;">Участники:</div>
-    <div id="groupMembersList" style="max-height:150px; overflow-y:auto; display:flex; flex-direction:column; gap:6px; border: 1px solid var(--border-color); padding: 8px; border-radius: 8px;"></div>
+    <div id="founderRenameSection">
+      <label style="font-size:0.8rem; color:#8e949a;">Название группы:</label>
+      <div style="display:flex; gap:6px; margin-top:4px;">
+        <input type="text" id="editGroupNameInput">
+        <button onclick="renameGroup()">Сохранить</button>
+      </div>
+    </div>
     
-    <div id="groupFounderActions" style="display:none; flex-direction:column; gap:8px; margin-top:10px; border-top: 1px solid var(--border-color); padding-top:10px;">
-      <div style="font-size:0.9rem;">Пригласить друзей:</div>
-      <div id="groupInviteChecklist" style="max-height:100px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
-      <button onclick="submitGroupSettings()">Сохранить изменения</button>
-      <button class="secondary" style="background:#d32f2f; margin-top:8px;" onclick="deleteGroup()">УДАЛИТЬ ГРУППУ</button>
+    <div style="font-size:0.85rem; font-weight:bold; margin-top:10px;">Добавить участника из друзей:</div>
+    <div style="display:flex; gap:6px;">
+      <select id="addMemberSelect" style="flex:1; background:var(--input-bg); color:#fff; border:none; border-radius:8px; padding:8px;"></select>
+      <button onclick="addMemberToGroup()">Добавить</button>
     </div>
 
-    <button id="groupLeaveBtn" class="secondary" style="background:#d32f2f; margin-top:10px;" onclick="leaveGroup()">Покинуть группу</button>
+    <div style="font-size:0.85rem; font-weight:bold; margin-top:10px;">Участники:</div>
+    <div id="groupMembersList" style="max-height:150px; overflow-y:auto;"></div>
+
+    <button id="leaveGroupBtn" class="secondary" style="background:#d32f2f;" onclick="leaveGroup()">Покинуть группу</button>
+    <button id="deleteGroupBtn" class="secondary" style="background:#900; display:none;" onclick="deleteGroup()">Удалить группу</button>
     <button class="secondary" onclick="toggleModal('groupSettingsModal', false)">Закрыть</button>
   </div>
 
-  <!-- Главный экран -->
+  <!-- Модальное окно создания группы -->
+  <div id="createGroupModal" class="modal">
+    <h2>Создать группу</h2>
+    <input type="text" id="groupNameInput" placeholder="Название группы">
+    <div style="font-size:0.9rem; margin-top:6px;">Выберите друзей для добавления:</div>
+    <div id="friendsChecklist" style="max-height:150px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
+    <button onclick="submitCreateGroup()">Создать чат</button>
+    <button class="secondary" onclick="toggleModal('createGroupModal', false)">Отмена</button>
+  </div>
+
+  <!-- Главное окно мессенджера -->
   <div id="appContainer" class="app-container">
     <div class="sidebar">
-      <div style="padding: 14px; border-bottom: 1px solid var(--border-color); display:flex; justify-content: space-between; align-items:center">
-        <div onclick="toggleModal('settingsModal', true)" style="display:flex; align-items:center; gap:8px; font-weight:bold; cursor:pointer">
-          <div id="myAvatar" class="avatar" style="width:32px; height:32px; font-size:0.8rem;"></div>
-          <span id="myName"></span>
+      <div class="sidebar-header">
+        <div class="user-info" onclick="toggleModal('settingsModal', true)">
+          <img id="myAvatar" class="avatar" style="width:32px; height:32px; display:none;">
+          <div id="myAvatarText" class="avatar" style="width:32px; height:32px;">U</div>
+          <span id="myName">User</span>
+          <span id="myAdminBadge"></span>
         </div>
         <button class="secondary" style="padding:6px 10px; font-size:0.8rem;" onclick="toggleModal('settingsModal', true)">⚙</button>
       </div>
@@ -127,42 +184,57 @@
       </div>
 
       <div id="chatsTab" class="tab-content">
-        <div class="chat-item" onclick="openSavedMessagesChat()">
-          <div class="avatar" style="background:#b83bde; font-size:1.2rem;">🔖</div>
-          <div class="info">
-            <div class="name">Избранное</div>
-            <div style="font-size:0.75rem; color:#8e949a;">Личные сообщения</div>
-          </div>
-        </div>
         <div id="chatsList"></div>
       </div>
 
       <div id="friendsTab" class="tab-content" style="display:none;">
         <div style="display:flex; gap:6px;">
-          <input type="text" id="friendSearchInput" placeholder="Имя пользователя">
-          <button style="padding:6px 10px;" onclick="sendFriendRequest()">+</button>
+          <input type="text" id="addFriendName" placeholder="Никнейм друга" style="font-size:0.85rem;">
+          <button onclick="sendFriendRequest()" style="padding:8px 12px;">+</button>
         </div>
+        
+        <button onclick="openCreateGroupModal()" style="margin-top:6px;" class="secondary">+ Создать группу</button>
+
+        <div style="font-size:0.8rem; color:#8e949a; margin-top:10px;">ЗАЯВКИ В ДРУЗЬЯ</div>
+        <div id="requestsList"></div>
+
+        <div style="font-size:0.8rem; color:#8e949a; margin-top:10px;">МОИ ДРУЗЬЯ</div>
         <div id="friendsList"></div>
       </div>
     </div>
 
     <div class="chat-main">
       <div id="chatHeader" class="chat-header" style="display:none;">
-        <div id="activeChatAvatar" class="avatar" style="width:36px; height:36px;"></div>
-        <div style="flex:1;">
-          <div id="activeChatName" style="display:flex; align-items:center; gap:4px;"></div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div id="activeChatAvatar" class="avatar">C</div>
+          <div>
+            <div id="activeChatName" style="display:flex; align-items:center; gap:4px;">Выберите чат</div>
+            <div id="activeChatSub" style="font-size:0.75rem; color:#8e949a;"></div>
+          </div>
         </div>
-        <button id="activeGroupSettingsBtn" class="secondary" style="padding: 6px 10px; display:none" onclick="openGroupSettingsModal()">⚙ Управление</button>
+        <button id="groupSettingsBtn" class="secondary" style="display:none; padding:6px 10px;" onclick="openGroupSettings()">⚙ Настройки группы</button>
       </div>
 
-      <div id="messagesArea" class="messages-area">
-        <div style="text-align:center; color:#8e949a; margin-top:auto;">Выберите чат для начала общения</div>
+      <div id="emptyState" class="empty-chat-state">
+        Выберите диалог из списка слева
       </div>
 
-      <div id="inputArea" class="input-area" style="display:none;">
-        <input type="text" id="msgInput" placeholder="Напишите сообщение..." onkeydown="if(event.key==='Enter') sendMessage()">
-        <button onclick="sendMessage()">Отправить</button>
+      <div id="messagesArea" class="messages-area" style="display:none;"></div>
+
+      <div id="imgPreviewBar" class="img-preview-bar">
+        <img id="imgPreview" src="" alt="preview">
+        <span style="font-size:0.85rem; flex:1;">Фото готово к отправке</span>
+        <button class="secondary" onclick="cancelImage()" style="padding:4px 8px;">✕</button>
       </div>
+
+      <form id="chatForm" class="input-area" style="display:none;" onsubmit="handleSendMsg(event)">
+        <label class="photo-btn" title="Отправить фото">
+          📷
+          <input type="file" id="msgPhotoInput" accept="image/*" style="display:none;" onchange="handleMsgPhoto(this)">
+        </label>
+        <input type="text" id="msgInput" placeholder="Напишите сообщение..." autocomplete="off">
+        <button type="submit">Отправить</button>
+      </form>
     </div>
   </div>
 
@@ -170,65 +242,161 @@
   <script>
     const socket = io();
     let authMode = 'login';
-    let currentUser = null;
+    let currentUser = JSON.parse(localStorage.getItem('wallchat_user') || 'null');
+    let tempAvatarBase64 = '';
+    let selectedImageBase64 = null;
+
     let activeChat = null;
-    let myData = { friends: [] };
+    let myData = { friends: [], friendRequests: [], groups: [], dob: null };
 
-    const adminCheckmarkSVG = `<span class="admin-badge" title="Администратор"><svg viewBox="0 0 24 24"><path d="M12 2L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-3zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 9z"/></svg></span>`;
-
-    function switchAuthTab(mode) {
-      authMode = mode;
-      document.getElementById('tabLogin').className = mode === 'login' ? '' : 'secondary';
-      document.getElementById('tabReg').className = mode === 'reg' ? '' : 'secondary';
-      document.getElementById('regBirthdayBox').style.display = mode === 'reg' ? 'block' : 'none';
-    }
+    const adminCheckmarkSVG = `<span class="admin-badge" title="Администратор"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2l2.4 1.8 3-.4.8 2.9 2.8 1.2-.8 2.9.8 2.9-2.8 1.2-.8 2.9-3-.4L12 22l-2.4-1.8-3 .4-.8-2.9-2.8-1.2.8-2.9-.8-2.9 2.8-1.2.8-2.9 3 .4L12 2z" fill="#3558d0" stroke="#b83bde" stroke-width="1.5"/><path d="M9 12l2 2 4-4" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg></span>`;
 
     function toggleModal(id, show) {
       document.getElementById(id).classList.toggle('active', show);
-      document.getElementById('overlay').classList.toggle('active', show);
+    }
+
+    function switchAuthTab(mode) {
+      authMode = mode;
+      document.getElementById('regAvatarBox').style.display = mode === 'reg' ? 'block' : 'none';
+      document.getElementById('regDobBox').style.display = mode === 'reg' ? 'block' : 'none';
+      document.getElementById('tabLogin').className = mode === 'login' ? '' : 'secondary';
+      document.getElementById('tabReg').className = mode === 'reg' ? '' : 'secondary';
+    }
+
+    function loadPreview(input, imgId) {
+      const file = input.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          document.getElementById(imgId).src = e.target.result;
+          tempAvatarBase64 = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      }
     }
 
     async function submitAuth() {
       const username = document.getElementById('authName').value.trim();
       const password = document.getElementById('authPass').value.trim();
-      const birthday = document.getElementById('authBirthday').value;
+      const dob = document.getElementById('authDob').value;
+      if (!username || !password) return alert('Заполните поля');
 
-      if (!username || !password) return alert('Заполните поля!');
       const endpoint = authMode === 'login' ? '/api/login' : '/api/register';
-      
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, birthday })
-      });
+      const body = { username, password, avatar: authMode === 'reg' ? tempAvatarBase64 : undefined, dob };
+
+      const res = await fetch(endpoint, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
       const data = await res.json();
-      if (!res.ok) return alert(data.error || 'Ошибка входа');
 
-      currentUser = data;
-      document.getElementById('authScreen').classList.remove('active');
-      document.getElementById('appContainer').classList.add('active');
-      document.getElementById('myName').innerText = data.username;
-      document.getElementById('myAvatar').innerText = data.username[0].toUpperCase();
-      
-      loadMyData();
-    }
-
-    function logout() {
-      location.reload();
-    }
-
-    async function saveSettings() {
-      const birthday = document.getElementById('setBirthday').value;
-      const newPassword = document.getElementById('setPass').value;
-      const res = await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
-        body: JSON.stringify({ birthday, newPassword })
-      });
       if (res.ok) {
-        alert('Настройки сохранены');
-        toggleModal('settingsModal', false);
+        currentUser = data;
+        localStorage.setItem('wallchat_user', JSON.stringify(data));
+        initApp();
+      } else {
+        alert(data.error);
       }
+    }
+
+    async function loadMyData() {
+      if (!currentUser) return;
+      const res = await fetch('/api/me', { headers: { 'Authorization': `Bearer ${currentUser.token}` } });
+      if (res.ok) {
+        myData = await res.json();
+        renderSidebar();
+      } else {
+        logout();
+      }
+    }
+
+    function renderSidebar() {
+      document.getElementById('myName').textContent = currentUser.username;
+      document.getElementById('myAdminBadge').innerHTML = currentUser.isAdmin ? adminCheckmarkSVG : '';
+      document.getElementById('setDob').value = myData.dob || '';
+
+      if (currentUser.avatar) {
+        document.getElementById('myAvatar').src = currentUser.avatar;
+        document.getElementById('myAvatar').style.display = 'block';
+        document.getElementById('myAvatarText').style.display = 'none';
+      } else {
+        document.getElementById('myAvatarText').textContent = currentUser.username[0].toUpperCase();
+        document.getElementById('myAvatarText').style.display = 'flex';
+        document.getElementById('myAvatar').style.display = 'none';
+      }
+
+      const chatsList = document.getElementById('chatsList');
+      chatsList.innerHTML = '';
+
+      // 1. Постоянный чат Избранное
+      const savedItem = document.createElement('div');
+      savedItem.className = `chat-item ${activeChat?.type === 'saved' ? 'active' : ''}`;
+      savedItem.onclick = () => openChat({ type: 'saved', id: 'saved', name: 'Избранное', avatar: null });
+      savedItem.innerHTML = `
+        <div class="avatar" style="background:var(--primary-gradient);">⭐</div>
+        <div class="info">
+          <div class="name">Избранное</div>
+          <div style="font-size:0.75rem; color:#8e949a;">Личные заметки</div>
+        </div>
+      `;
+      chatsList.appendChild(savedItem);
+
+      // 2. Личные чаты (Друзья)
+      myData.friends.forEach(f => {
+        const item = document.createElement('div');
+        item.className = `chat-item ${activeChat?.id === f.username ? 'active' : ''}`;
+        item.onclick = () => openChat({ type: 'dm', id: f.username, name: f.username, avatar: f.avatar, isAdmin: f.isAdmin });
+        
+        const avatarHTML = f.avatar 
+          ? `<img class="avatar" src="${f.avatar}">`
+          : `<div class="avatar">${f.username[0].toUpperCase()}</div>`;
+
+        item.innerHTML = `
+          ${avatarHTML}
+          <div class="info">
+            <div class="name">${f.username} ${f.isAdmin ? adminCheckmarkSVG : ''}</div>
+            <div style="font-size:0.75rem; color:#8e949a;">Личный чат</div>
+          </div>
+        `;
+        chatsList.appendChild(item);
+      });
+
+      // 3. Группы
+      myData.groups.forEach(g => {
+        const item = document.createElement('div');
+        item.className = `chat-item ${activeChat?.id === g.id ? 'active' : ''}`;
+        item.onclick = () => openChat({ type: 'group', id: g.id, name: g.name, groupData: g });
+
+        item.innerHTML = `
+          <div class="avatar" style="background:#b83bde;">👥</div>
+          <div class="info">
+            <div class="name">${g.name} ${g.isFounder ? '<span class="founder-badge">Founder</span>' : ''}</div>
+            <div style="font-size:0.75rem; color:#8e949a;">Участников: ${g.members.length}</div>
+          </div>
+        `;
+        chatsList.appendChild(item);
+      });
+
+      // Заявки и список друзей
+      const reqList = document.getElementById('requestsList');
+      reqList.innerHTML = myData.friendRequests.length === 0 ? '<div style="font-size:0.8rem; color:#666;">Нет новых заявок</div>' : '';
+      myData.friendRequests.forEach(r => {
+        const item = document.createElement('div');
+        item.className = 'chat-item';
+        item.innerHTML = `
+          <div class="info"><div class="name">${r.username} ${r.isAdmin ? adminCheckmarkSVG : ''}</div></div>
+          <button onclick="acceptRequest('${r.username}')" style="padding:4px 8px;">✓</button>
+          <button onclick="rejectRequest('${r.username}')" class="secondary" style="padding:4px 8px;">✕</button>
+        `;
+        reqList.appendChild(item);
+      });
+
+      const fList = document.getElementById('friendsList');
+      fList.innerHTML = myData.friends.length === 0 ? '<div style="font-size:0.8rem; color:#666;">Список друзей пуст</div>' : '';
+      myData.friends.forEach(f => {
+        const item = document.createElement('div');
+        item.className = 'chat-item';
+        item.onclick = () => { switchSidebarTab('chats'); openChat({ type: 'dm', id: f.username, name: f.username, avatar: f.avatar, isAdmin: f.isAdmin }); };
+        item.innerHTML = `<div class="name">${f.username} ${f.isAdmin ? adminCheckmarkSVG : ''}</div>`;
+        fList.appendChild(item);
+      });
     }
 
     function switchSidebarTab(tab) {
@@ -238,137 +406,300 @@
       document.getElementById('tabFriendsBtn').className = `nav-tab ${tab === 'friends' ? 'active' : ''}`;
     }
 
-    function openSavedMessagesChat() {
-      openChat({ type: 'saved', id: 'saved', name: 'Избранное' });
+    async function sendFriendRequest() {
+      const name = document.getElementById('addFriendName').value.trim();
+      if (!name) return;
+      const res = await fetch('/api/friends/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ targetUsername: name })
+      });
+      const data = await res.json();
+      alert(data.message || data.error);
+      if (res.ok) { document.getElementById('addFriendName').value = ''; loadMyData(); }
+    }
+
+    async function acceptRequest(requesterUsername) {
+      await fetch('/api/friends/accept', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ requesterUsername })
+      });
+      loadMyData();
+    }
+
+    async function rejectRequest(requesterUsername) {
+      await fetch('/api/friends/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ requesterUsername })
+      });
+      loadMyData();
+    }
+
+    function openCreateGroupModal() {
+      const checklist = document.getElementById('friendsChecklist');
+      checklist.innerHTML = myData.friends.length === 0 ? 'Сначала добавьте друзей' : '';
+      myData.friends.forEach(f => {
+        const label = document.createElement('label');
+        label.style.display = 'flex'; label.style.gap = '8px';
+        label.innerHTML = `<input type="checkbox" value="${f.username}"> ${f.username}`;
+        checklist.appendChild(label);
+      });
+      toggleModal('createGroupModal', true);
+    }
+
+    async function submitCreateGroup() {
+      const groupName = document.getElementById('groupNameInput').value.trim();
+      if (!groupName) return alert('Введите название группы');
+      const checked = Array.from(document.querySelectorAll('#friendsChecklist input:checked')).map(cb => cb.value);
+
+      const res = await fetch('/api/groups/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ groupName, memberUsernames: checked })
+      });
+      if (res.ok) {
+        toggleModal('createGroupModal', false);
+        document.getElementById('groupNameInput').value = '';
+        await loadMyData();
+      }
     }
 
     function openChat(chat) {
       activeChat = chat;
-      document.getElementById('chatHeader').style.display = 'flex';
-      document.getElementById('inputArea').style.display = 'flex';
-      document.getElementById('activeChatName').innerHTML = chat.name;
-      document.getElementById('activeChatAvatar').innerText = chat.name[0].toUpperCase();
-      
-      document.getElementById('activeGroupSettingsBtn').style.display = chat.type === 'group' ? 'block' : 'none';
+      renderSidebar();
 
+      document.getElementById('emptyState').style.display = 'none';
+      document.getElementById('chatHeader').style.display = 'flex';
+      document.getElementById('messagesArea').style.display = 'flex';
+      document.getElementById('chatForm').style.display = 'flex';
+
+      document.getElementById('activeChatName').innerHTML = `${chat.name} ${chat.isAdmin ? adminCheckmarkSVG : ''}`;
+      document.getElementById('activeChatSub').textContent = 
+        chat.type === 'saved' ? 'Сохраняйте сообщения здесь' : (chat.type === 'dm' ? 'Личный чат' : 'Групповой чат');
+
+      document.getElementById('groupSettingsBtn').style.display = chat.type === 'group' ? 'block' : 'none';
+
+      const avatarHeader = document.getElementById('activeChatAvatar');
+      if (chat.type === 'saved') {
+        avatarHeader.outerHTML = `<div id="activeChatAvatar" class="avatar" style="background:var(--primary-gradient)">⭐</div>`;
+      } else if (chat.avatar) {
+        avatarHeader.outerHTML = `<img id="activeChatAvatar" class="avatar" src="${chat.avatar}">`;
+      } else {
+        avatarHeader.outerHTML = `<div id="activeChatAvatar" class="avatar">${chat.name[0].toUpperCase()}</div>`;
+      }
+
+      document.getElementById('messagesArea').innerHTML = '';
       socket.emit('join_room', { token: currentUser.token, chatType: chat.type, targetId: chat.id });
     }
 
-    async function openGroupSettingsModal() {
+    // Настройки группы
+    function openGroupSettings() {
       if (!activeChat || activeChat.type !== 'group') return;
-      const res = await fetch(`/api/groups/${activeChat.id}`, { headers: { 'Authorization': `Bearer ${currentUser.token}` } });
-      const groupData = await res.json();
-      
-      document.getElementById('groupSetNameInput').value = groupData.name;
-      const membersList = document.getElementById('groupMembersList');
-      membersList.innerHTML = '';
+      const group = myData.groups.find(g => g.id === activeChat.id);
+      if (!group) return;
 
-      groupData.members.forEach(m => {
-        const item = document.createElement('div');
-        item.style.display = 'flex'; item.style.justifyContent = 'space-between'; item.style.alignItems = 'center';
-        const founderBadge = m.status === 'founder' ? '<span class="founder-badge">Founder</span>' : '';
-        const removeBtn = (groupData.isFounder && m.status !== 'founder') ? `<button class="secondary" style="padding:2px 6px; font-size:0.7rem; background:#4e1919" onclick="removeMemberFromGroup('${m.username}')">✕</button>` : '';
-        item.innerHTML = `<span>${m.username} ${m.isAdmin ? adminCheckmarkSVG : ''} ${founderBadge}</span>${removeBtn}`;
-        membersList.appendChild(item);
+      document.getElementById('editGroupNameInput').value = group.name;
+      document.getElementById('founderRenameSection').style.display = group.isFounder ? 'block' : 'none';
+      document.getElementById('deleteGroupBtn').style.display = group.isFounder ? 'block' : 'none';
+
+      // Друзья, которых можно добавить
+      const select = document.getElementById('addMemberSelect');
+      select.innerHTML = '';
+      const nonMembers = myData.friends.filter(f => !group.members.some(m => m.username === f.username));
+      nonMembers.forEach(f => {
+        select.innerHTML += `<option value="${f.username}">${f.username}</option>`;
       });
 
-      const founderActions = document.getElementById('groupFounderActions');
-      const leaveBtn = document.getElementById('groupLeaveBtn');
-      
-      if (groupData.isFounder) {
-        founderActions.style.display = 'flex';
-        leaveBtn.style.display = 'none';
-      } else {
-        founderActions.style.display = 'none';
-        leaveBtn.style.display = 'block';
-      }
+      // Список участников
+      const mList = document.getElementById('groupMembersList');
+      mList.innerHTML = '';
+      group.members.forEach(m => {
+        const div = document.createElement('div');
+        div.className = 'member-item';
+        div.innerHTML = `
+          <span>${m.username} ${m.isFounder ? '<span class="founder-badge">Founder</span>' : ''}</span>
+          ${group.isFounder && !m.isFounder ? `<button onclick="removeMember('${m.username}')" style="padding:2px 6px; font-size:0.7rem; background:#d32f2f;">Удалить</button>` : ''}
+        `;
+        mList.appendChild(div);
+      });
 
       toggleModal('groupSettingsModal', true);
     }
 
-    async function submitGroupSettings() {
-      const name = document.getElementById('groupSetNameInput').value;
-      const res = await fetch('/api/groups/settings', {
+    async function renameGroup() {
+      const newName = document.getElementById('editGroupNameInput').value.trim();
+      const res = await fetch('/api/groups/rename', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
-        body: JSON.stringify({ groupId: activeChat.id, name })
+        body: JSON.stringify({ groupId: activeChat.id, newName })
       });
-      if (res.ok) {
-        toggleModal('groupSettingsModal', false);
-        alert('Обновлено');
-      }
+      if (res.ok) { toggleModal('groupSettingsModal', false); await loadMyData(); }
+      else { const d = await res.json(); alert(d.error); }
+    }
+
+    async function addMemberToGroup() {
+      const username = document.getElementById('addMemberSelect').value;
+      if (!username) return;
+      const res = await fetch('/api/groups/add-member', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ groupId: activeChat.id, targetUsername: username })
+      });
+      if (res.ok) { openGroupSettings(); await loadMyData(); }
+    }
+
+    async function removeMember(targetUsername) {
+      const res = await fetch('/api/groups/remove-member', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ groupId: activeChat.id, targetUsername })
+      });
+      if (res.ok) { openGroupSettings(); await loadMyData(); }
+      else { const d = await res.json(); alert(d.error); }
     }
 
     async function leaveGroup() {
-      if (!confirm('Покинуть группу?')) return;
-      await fetch('/api/groups/leave', {
+      const res = await fetch('/api/groups/leave', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
         body: JSON.stringify({ groupId: activeChat.id })
       });
-      toggleModal('groupSettingsModal', false);
-      location.reload();
+      if (res.ok) {
+        toggleModal('groupSettingsModal', false);
+        activeChat = null;
+        document.getElementById('chatHeader').style.display = 'none';
+        document.getElementById('messagesArea').style.display = 'none';
+        document.getElementById('chatForm').style.display = 'none';
+        document.getElementById('emptyState').style.display = 'flex';
+        await loadMyData();
+      } else { const d = await res.json(); alert(d.error); }
     }
 
     async function deleteGroup() {
-      if (!confirm('Удалить группу безвозвратно?')) return;
-      await fetch('/api/groups/delete', {
+      if (!confirm('Удалить группу для всех?')) return;
+      const res = await fetch('/api/groups/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
         body: JSON.stringify({ groupId: activeChat.id })
       });
-      toggleModal('groupSettingsModal', false);
-      location.reload();
+      if (res.ok) {
+        toggleModal('groupSettingsModal', false);
+        activeChat = null;
+        document.getElementById('chatHeader').style.display = 'none';
+        document.getElementById('messagesArea').style.display = 'none';
+        document.getElementById('chatForm').style.display = 'none';
+        document.getElementById('emptyState').style.display = 'flex';
+        await loadMyData();
+      } else { const d = await res.json(); alert(d.error); }
     }
 
-    async function removeMemberFromGroup(username) {
-      await fetch('/api/groups/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
-        body: JSON.stringify({ groupId: activeChat.id, removeMembers: [username] })
-      });
-      openGroupSettingsModal();
+    function handleMsgPhoto(input) {
+      const file = input.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          selectedImageBase64 = e.target.result;
+          document.getElementById('imgPreview').src = selectedImageBase64;
+          document.getElementById('imgPreviewBar').style.display = 'flex';
+        };
+        reader.readAsDataURL(file);
+      }
     }
 
-    function sendMessage() {
+    function cancelImage() {
+      selectedImageBase64 = null;
+      document.getElementById('imgPreviewBar').style.display = 'none';
+      document.getElementById('msgPhotoInput').value = '';
+    }
+
+    function handleSendMsg(e) {
+      e.preventDefault();
       const input = document.getElementById('msgInput');
       const text = input.value.trim();
-      if (!text || !activeChat) return;
 
-      socket.emit('send_message', { token: currentUser.token, chatType: activeChat.type, targetId: activeChat.id, text });
-      input.value = '';
+      if ((text || selectedImageBase64) && activeChat) {
+        socket.emit('send_message', {
+          token: currentUser.token,
+          chatType: activeChat.type,
+          targetId: activeChat.id,
+          text: text,
+          image: selectedImageBase64
+        });
+        input.value = '';
+        cancelImage();
+      }
     }
 
-    socket.on('chat_history', (msgs) => {
+    socket.on('chat_history', (history) => {
       const area = document.getElementById('messagesArea');
       area.innerHTML = '';
-      msgs.forEach(renderMessage);
+      history.forEach(appendMessage);
     });
 
-    socket.on('new_message', (msg) => {
-      renderMessage(msg);
-    });
+    socket.on('new_message', (msg) => appendMessage(msg));
+    socket.on('error_msg', (data) => alert(data.error));
 
-    function renderMessage(msg) {
+    function appendMessage(msg) {
       const area = document.getElementById('messagesArea');
       const isMe = msg.sender === currentUser.username;
+
       const row = document.createElement('div');
-      row.className = `message-row ${isMe ? 'sent' : ''}`;
-      
-      const adminBadge = msg.isAdmin ? adminCheckmarkSVG : '';
+      row.className = `message-row ${isMe ? 'sent' : 'received'}`;
+
+      const avatarHTML = msg.avatar 
+        ? `<img class="avatar" style="width:30px; height:30px;" src="${msg.avatar}">`
+        : `<div class="avatar" style="width:30px; height:30px; font-size:0.8rem;">${msg.sender[0].toUpperCase()}</div>`;
+
+      const imgHTML = msg.image ? `<img class="message-img" src="${msg.image}">` : '';
+
       row.innerHTML = `
+        ${avatarHTML}
         <div class="message-bubble">
-          <div style="font-size:0.75rem; color:#8e949a; margin-bottom:2px;">${msg.sender} ${adminBadge}</div>
+          <div class="message-sender">${msg.sender} ${msg.isAdmin ? adminCheckmarkSVG : ''}</div>
           <div>${msg.text}</div>
+          ${imgHTML}
+          <div class="message-time">${msg.time}</div>
         </div>
       `;
+
       area.appendChild(row);
       area.scrollTop = area.scrollHeight;
     }
 
-    async function loadMyData() {
-      // Инициализация при входе
+    async function saveSettings() {
+      const newPassword = document.getElementById('setPass').value.trim();
+      const dob = document.getElementById('setDob').value;
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ avatar: tempAvatarBase64 || currentUser.avatar, newPassword, dob })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        currentUser.avatar = data.avatar;
+        localStorage.setItem('wallchat_user', JSON.stringify(currentUser));
+        toggleModal('settingsModal', false);
+        loadMyData();
+      }
     }
+
+    function logout() {
+      localStorage.removeItem('wallchat_user');
+      currentUser = null;
+      document.getElementById('appContainer').classList.remove('active');
+      document.getElementById('authScreen').classList.add('active');
+      toggleModal('settingsModal', false);
+    }
+
+    function initApp() {
+      document.getElementById('authScreen').classList.remove('active');
+      document.getElementById('appContainer').classList.add('active');
+      loadMyData();
+    }
+
+    if (currentUser) initApp();
   </script>
 </body>
 </html>

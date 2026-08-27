@@ -124,7 +124,7 @@
     </div>
     <div id="regAvatarBox" style="display:none; text-align:center;">
       <label for="regAvatarInput" style="cursor:pointer;">
-        <img id="regAvatarPreview" class="avatar" style="width:70px; height:70px; margin:auto;" src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>" alt="+">
+        <img id="regAvatarPreview" class="avatar" style="width:70px; height:70px; margin:auto;" src="data:image/svg+xml,<svg xmlns='[http://www.w3.org/2000/svg'/](http://www.w3.org/2000/svg'/)>" alt="+">
         <div style="font-size:0.8rem; color:#b83bde; margin-top:4px;">Выбрать аватар</div>
       </label>
       <input type="file" id="regAvatarInput" accept="image/*" style="display:none" onchange="loadPreview(this, 'regAvatarPreview')">
@@ -167,7 +167,7 @@
     <button class="secondary" onclick="toggleModal('settingsModal', false)">Закрыть</button>
     <button class="secondary" style="background:#d32f2f" onclick="logout()">Выйти</button>
 
-    <div style="text-align: center; color: #8e949a; font-size: 0.8rem; margin-top: 8px;">Версия 1.6.0</div>
+    <div style="text-align: center; color: #8e949a; font-size: 0.8rem; margin-top: 8px;">Версия 1.2.0</div>
   </div>
 
   <div id="forwardModal" class="modal">
@@ -614,6 +614,7 @@
       const bar = document.getElementById('selectionBar');
       const count = document.getElementById('selectedCount');
       const editBtn = document.getElementById('editSelectedBtn');
+      const deleteBtn = bar.querySelector('button[style*="#d32f2f"]');
 
       if (selectedMsgIds.size > 0) {
         bar.style.display = 'flex';
@@ -629,6 +630,15 @@
           }
         } else {
           editBtn.style.display = 'none';
+        }
+
+        const selectedMsgs = currentHistory.filter(m => selectedMsgIds.has(m.id));
+        const anyOtherSender = selectedMsgs.some(m => m.sender !== currentUser.username);
+
+        if (anyOtherSender) {
+          deleteBtn.style.display = 'none';
+        } else {
+          deleteBtn.style.display = 'block';
         }
 
       } else {

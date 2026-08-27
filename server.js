@@ -8,13 +8,12 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { maxHttpBufferSize: 1e8 }); // Лимит 100MB
 
-const SECRET_KEY = 'wallchat_global_secret';
+const SECRET_KEY = 'wallchat_secret_key_change_me';
 const ADMINS = ['heawyrt', 'w1len'];
 
-// Базы данных в памяти
-const users = new Map();   // username -> { ..., birthday, friends, requests }
-const groups = new Map();  // groupId -> { id, name, members: Set, founder: string }
-const messagesStore = new Map(); // chatRoomId -> Messages[]
+const users = new Map();   // username -> { username, password, avatar, dob, friends: Set, friendRequests: Set }
+const groups = new Map();  // groupId -> { id, name, members: Set, createdBy }
+const messagesStore = new Map(); // chatRoomId -> Array of messages
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static('public'));
@@ -23,7 +22,6 @@ function isAdmin(username) {
   return !!username && ADMINS.includes(username.toLowerCase());
 }
 
-// Middleware
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -38,7 +36,7 @@ function authenticateToken(req, res, next) {
 
 // Регистрация
 app.post('/api/register', async (req, res) => {
-  const { username, password, avatar, birthday } = req.body;
+  const { username, password, avatar, dob } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Заполните все поля' });
   const cleanName = username.trim();
   if (users.has(cleanName)) return res.status(400).json({ error: 'Пользователь уже существует' });
@@ -48,23 +46,14 @@ app.post('/api/register', async (req, res) => {
     username: cleanName,
     password: hashedPassword,
     avatar: avatar || null,
-    birthday: birthday || null, // Новое: Дата рождения
+    dob: dob || null,
     friends: new Set(),
     friendRequests: new Set()
   };
   users.set(cleanName, user);
 
-  // Инициализация Избранного (Self-DM roomID: wallchat_saved_username)
-  const savedMessagesRoomId = `wallchat_saved_${cleanName}`;
-  if (!messagesStore.has(savedMessagesRoomId)) {
-    messagesStore.set(savedMessagesRoomId, [{
-      id: 0, sender: 'Wallchat Бот', avatar: null, isAdmin: false, time: '',
-      text: 'Добро пожаловать в мессенджер Wallchat! Это ваш личный чат "Избранное". Сюда нельзя никого добавить.', image: null
-    }]);
-  }
-
   const token = jwt.sign({ username: cleanName }, SECRET_KEY);
-  res.json({ token, username: cleanName, avatar: user.avatar, isAdmin: isAdmin(cleanName) });
+  res.json({ token, username: cleanName, avatar: user.avatar, dob: user.dob, isAdmin: isAdmin(cleanName) });
 });
 
 // Вход
@@ -78,54 +67,110 @@ app.post('/api/login', async (req, res) => {
   }
 
   const token = jwt.sign({ username: cleanName }, SECRET_KEY);
-  res.json({ token, username: cleanName, avatar: user.avatar, isAdmin: isAdmin(cleanName) });
+  res.json({ token, username: cleanName, avatar: user.avatar, dob: user.dob, isAdmin: isAdmin(cleanName) });
 });
 
-// Настройки (обновление аватара, пароля, даты рождения)
-app.post('/api/settings', authenticateToken, async (req, res) => {
-  const { avatar, newPassword, birthday } = req.body;
+// Данные профиля
+app.get('/api/me', authenticateToken, (req, res) => {
   const user = users.get(req.user.username);
   if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
 
-  if (avatar !== undefined) user.avatar = avatar;
-  if (birthday !== undefined) user.birthday = birthday; // Обновление даты
-  if (newPassword) user.password = await bcrypt.hash(newPassword, 10);
-
-  res.json({ success: true, avatar: user.avatar, birthday: user.birthday });
-});
-
-// Группы: Получение полной информации
-app.get('/api/groups/:groupId', authenticateToken, (req, res) => {
-  const group = groups.get(req.params.groupId);
-  if (!group || !group.members.has(req.user.username)) {
-    return res.status(404).json({ error: 'Группа не найдена' });
-  }
-
-  const membersInfo = Array.from(group.members).map(mName => {
-    const mUser = users.get(mName);
+  const friendsList = Array.from(user.friends).map(fName => {
+    const fUser = users.get(fName);
     return {
-      username: mName,
-      avatar: mUser ? mUser.avatar : null,
-      isAdmin: isAdmin(mName),
-      status: group.founder === mName ? 'founder' : 'member' // Новое: Статус
+      username: fName,
+      avatar: fUser ? fUser.avatar : null,
+      isAdmin: isAdmin(fName)
     };
   });
 
+  const requestsList = Array.from(user.friendRequests).map(rName => {
+    const rUser = users.get(rName);
+    return {
+      username: rName,
+      avatar: rUser ? rUser.avatar : null,
+      isAdmin: isAdmin(rName)
+    };
+  });
+
+  const userGroups = [];
+  for (const [gId, group] of groups.entries()) {
+    if (group.members.has(req.user.username)) {
+      const membersList = Array.from(group.members).map(mName => {
+        const mUser = users.get(mName);
+        return {
+          username: mName,
+          avatar: mUser ? mUser.avatar : null,
+          isFounder: mName === group.createdBy,
+          isAdmin: isAdmin(mName)
+        };
+      });
+
+      userGroups.push({
+        id: group.id,
+        name: group.name,
+        createdBy: group.createdBy,
+        isFounder: group.createdBy === req.user.username,
+        members: membersList
+      });
+    }
+  }
+
   res.json({
-    id: group.id,
-    name: group.name,
-    founder: group.founder,
-    members: membersInfo,
-    isFounder: group.founder === req.user.username // Флаг для UI
+    username: user.username,
+    avatar: user.avatar,
+    dob: user.dob,
+    isAdmin: isAdmin(user.username),
+    friends: friendsList,
+    friendRequests: requestsList,
+    groups: userGroups
   });
 });
 
-// Группы: Создать
+// Заявки в друзья
+app.post('/api/friends/request', authenticateToken, (req, res) => {
+  const { targetUsername } = req.body;
+  const senderName = req.user.username;
+  const targetName = (targetUsername || '').trim();
+
+  if (senderName === targetName) return res.status(400).json({ error: 'Нельзя добавить самого себя' });
+  const targetUser = users.get(targetName);
+  if (!targetUser) return res.status(404).json({ error: 'Пользователь не найден' });
+
+  const senderUser = users.get(senderName);
+  if (senderUser.friends.has(targetName)) return res.status(400).json({ error: 'Вы уже в друзья' });
+  if (targetUser.friendRequests.has(senderName)) return res.status(400).json({ error: 'Заявка уже отправлена' });
+
+  targetUser.friendRequests.add(senderName);
+  res.json({ success: true, message: `Заявка отправлена пользователю ${targetName}` });
+});
+
+app.post('/api/friends/accept', authenticateToken, (req, res) => {
+  const { requesterUsername } = req.body;
+  const user = users.get(req.user.username);
+  const requester = users.get(requesterUsername);
+
+  if (!user || !requester) return res.status(404).json({ error: 'Пользователь не найден' });
+
+  user.friendRequests.delete(requesterUsername);
+  user.friends.add(requesterUsername);
+  requester.friends.add(req.user.username);
+
+  res.json({ success: true });
+});
+
+app.post('/api/friends/reject', authenticateToken, (req, res) => {
+  const user = users.get(req.user.username);
+  if (user) user.friendRequests.delete(req.body.requesterUsername);
+  res.json({ success: true });
+});
+
+// Группы: Создание
 app.post('/api/groups/create', authenticateToken, (req, res) => {
   const { groupName, memberUsernames } = req.body;
   const creator = req.user.username;
 
-  if (!groupName || !groupName.trim()) return res.status(400).json({ error: 'Укажите название' });
+  if (!groupName || !groupName.trim()) return res.status(400).json({ error: 'Укажите название группы' });
 
   const creatorUser = users.get(creator);
   const validMembers = new Set([creator]);
@@ -137,79 +182,83 @@ app.post('/api/groups/create', authenticateToken, (req, res) => {
   }
 
   const groupId = 'group_' + Date.now();
-  const group = {
-    id: groupId, name: groupName.trim(), members: validMembers,
-    founder: creator // Основатель
-  };
+  const group = { id: groupId, name: groupName.trim(), members: validMembers, createdBy: creator };
   groups.set(groupId, group);
 
-  res.json({ success: true, group: { id: group.id, name: group.name, members: Array.from(group.members) } });
+  res.json({ success: true, group });
 });
 
-// Настройки Группы (Founder only)
-app.post('/api/groups/settings', authenticateToken, (req, res) => {
-  const { groupId, name, removeMembers, addMembers } = req.body;
+// Группы: Переименование (только Founder)
+app.post('/api/groups/rename', authenticateToken, (req, res) => {
+  const { groupId, newName } = req.body;
   const group = groups.get(groupId);
+  if (!group) return res.status(404).json({ error: 'Группа не найдена' });
+  if (group.createdBy !== req.user.username) return res.status(403).json({ error: 'Только Founder может изменять название' });
 
-  if (!group || group.founder !== req.user.username) {
-    return res.status(403).json({ error: 'Нет прав управления' });
-  }
-
-  if (name && name.trim()) group.name = name.trim();
-
-  // Удаление участников
-  if (Array.isArray(removeMembers)) {
-    removeMembers.forEach(m => {
-      if (m !== group.founder) group.members.delete(m); // Founder не может удалить себя так
-    });
-  }
-
-  // Новое: Добавление участников (только друзей Founder)
-  const creatorUser = users.get(req.user.username);
-  if (Array.isArray(addMembers)) {
-    addMembers.forEach(m => {
-      if (creatorUser.friends.has(m)) group.members.add(m);
-    });
-  }
-
-  res.json({ success: true, message: 'Настройки группы обновлены' });
+  group.name = newName.trim();
+  res.json({ success: true });
 });
 
-// Покинуть группу
+// Группы: Добавление участников
+app.post('/api/groups/add-member', authenticateToken, (req, res) => {
+  const { groupId, targetUsername } = req.body;
+  const group = groups.get(groupId);
+  if (!group) return res.status(404).json({ error: 'Группа не найдена' });
+
+  group.members.add(targetUsername);
+  res.json({ success: true });
+});
+
+// Группы: Удаление участника (только Founder)
+app.post('/api/groups/remove-member', authenticateToken, (req, res) => {
+  const { groupId, targetUsername } = req.body;
+  const group = groups.get(groupId);
+  if (!group) return res.status(404).json({ error: 'Группа не найдена' });
+  if (group.createdBy !== req.user.username) return res.status(403).json({ error: 'Только Founder может удалять участников' });
+  if (targetUsername === group.createdBy) return res.status(400).json({ error: 'Основатель не может быть удален' });
+
+  group.members.delete(targetUsername);
+  res.json({ success: true });
+});
+
+// Группы: Покинуть группу
 app.post('/api/groups/leave', authenticateToken, (req, res) => {
   const { groupId } = req.body;
   const group = groups.get(groupId);
-
-  if (!group || !group.members.has(req.user.username)) {
-    return res.status(404).json({ error: 'Группа не найдена' });
-  }
-
-  if (group.founder === req.user.username) {
-    return res.status(400).json({ error: 'Founder не может покинуть группу. Только удалить.' });
+  if (!group) return res.status(404).json({ error: 'Группа не найдена' });
+  if (group.createdBy === req.user.username) {
+    return res.status(400).json({ error: 'Founder не может покинуть группу. Вы можете только удалить её.' });
   }
 
   group.members.delete(req.user.username);
   res.json({ success: true });
 });
 
-// Удалить группу (Founder only)
+// Группы: Удаление всей группы (только Founder)
 app.post('/api/groups/delete', authenticateToken, (req, res) => {
   const { groupId } = req.body;
   const group = groups.get(groupId);
-
-  if (!group || group.founder !== req.user.username) {
-    return res.status(403).json({ error: 'Нет прав удаления' });
-  }
+  if (!group) return res.status(404).json({ error: 'Группа не найдена' });
+  if (group.createdBy !== req.user.username) return res.status(403).json({ error: 'Только Founder может удалить группу' });
 
   groups.delete(groupId);
-  messagesStore.delete(groupId);
   res.json({ success: true });
 });
 
-// ... (Остальной API code из прошлых версий: me, friends, socket.io) ...
-// Socket join_room logic must handle `wallchat_saved_${cleanName}` room specifically.
+// Настройки пользователя (Аватар, пароль, дата рождения)
+app.post('/api/settings', authenticateToken, async (req, res) => {
+  const { avatar, newPassword, dob } = req.body;
+  const user = users.get(req.user.username);
+  if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
 
-// Socket.io (Пересылка сообщений)
+  if (avatar !== undefined) user.avatar = avatar;
+  if (dob !== undefined) user.dob = dob;
+  if (newPassword) user.password = await bcrypt.hash(newPassword, 10);
+
+  res.json({ success: true, avatar: user.avatar, dob: user.dob });
+});
+
+// Socket.io
 io.on('connection', (socket) => {
   socket.on('join_room', ({ token, chatType, targetId }) => {
     try {
@@ -220,21 +269,29 @@ io.on('connection', (socket) => {
 
       let room = null;
       if (chatType === 'saved') {
-        room = `wallchat_saved_${username}`; // Только моя комната Избранного
+        room = 'saved_' + username;
       } else if (chatType === 'dm') {
-        if (user.friends.has(targetId)) room = [username, targetId].sort().join('_');
+        if (user.friends.has(targetId)) {
+          room = [username, targetId].sort().join('_');
+        }
       } else if (chatType === 'group') {
         const group = groups.get(targetId);
-        if (group && group.members.has(username)) room = targetId;
+        if (group && group.members.has(username)) {
+          room = targetId;
+        }
       }
 
       if (room) {
         if (socket.currentRoom) socket.leave(socket.currentRoom);
         socket.join(room);
         socket.currentRoom = room;
-        socket.emit('chat_history', messagesStore.get(room) || []);
+
+        const history = messagesStore.get(room) || [];
+        socket.emit('chat_history', history);
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error('Socket error:', e);
+    }
   });
 
   socket.on('send_message', ({ token, chatType, targetId, text, image }) => {
@@ -246,27 +303,39 @@ io.on('connection', (socket) => {
 
       let room = null;
       if (chatType === 'saved') {
-        room = `wallchat_saved_${senderName}`;
+        room = 'saved_' + senderName;
       } else if (chatType === 'dm') {
-        if (!senderUser.friends.has(targetId)) return;
+        if (!senderUser.friends.has(targetId)) {
+          return socket.emit('error_msg', { error: 'Пользователя нет в друзьях. Писать нельзя.' });
+        }
         room = [senderName, targetId].sort().join('_');
       } else if (chatType === 'group') {
         const group = groups.get(targetId);
-        if (!group || !group.members.has(senderName)) return;
+        if (!group || !group.members.has(senderName)) {
+          return socket.emit('error_msg', { error: 'Вы не состоите в этой группе.' });
+        }
         room = targetId;
       }
 
       if (room) {
         const msgData = {
-          id: Date.now(), sender: senderName, avatar: senderUser.avatar, isAdmin: isAdmin(senderName),
-          text: text || '', image: image || null,
+          id: Date.now(),
+          sender: senderName,
+          avatar: senderUser.avatar,
+          isAdmin: isAdmin(senderName),
+          text: text || '',
+          image: image || null,
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         };
+
         if (!messagesStore.has(room)) messagesStore.set(room, []);
         messagesStore.get(room).push(msgData);
+
         io.to(room).emit('new_message', msgData);
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error('Send error:', e);
+    }
   });
 });
 

@@ -24,14 +24,11 @@ function isAdmin(username) {
   return !!username && ADMINS.includes(username.toLowerCase());
 }
 
-// Изменение 1: Функция для автоматического добавления админов в друзья
 function crossFriendAdmins(newUser) {
   const newNameLC = newUser.username.toLowerCase();
   if (ADMINS.includes(newNameLC)) {
-    // Находим второго админа
     const otherAdminName = ADMINS.find(name => name !== newNameLC);
     if (otherAdminName) {
-      // Ищем в базе именно с правильным регистром
       for (let user of users.values()) {
         if (user.username.toLowerCase() === otherAdminName) {
           newUser.friends.add(user.username);
@@ -60,7 +57,6 @@ app.post('/api/register', async (req, res) => {
   const { username, password, avatar, dob } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Заполните все поля' });
   
-  // Изменение 3: Проверка длины пароля (4-20)
   if (password.length < 4 || password.length > 20) {
     return res.status(400).json({ error: 'Длина пароля должна быть от 4 до 20 символов' });
   }
@@ -83,7 +79,6 @@ app.post('/api/register', async (req, res) => {
   };
   users.set(cleanName, user);
 
-  // Изменение 1: Кросс-добавление админов
   crossFriendAdmins(user);
 
   const token = jwt.sign({ username: cleanName }, SECRET_KEY);
@@ -104,7 +99,6 @@ app.post('/api/login', async (req, res) => {
   res.json({ token, username: cleanName, avatar: user.avatar, dob: user.dob, isAdmin: isAdmin(cleanName) });
 });
 
-// Данные профиля
 app.get('/api/me', authenticateToken, (req, res) => {
   const user = users.get(req.user.username);
   if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
@@ -161,7 +155,6 @@ app.get('/api/me', authenticateToken, (req, res) => {
   });
 });
 
-// Заявки в друзья
 app.post('/api/friends/request', authenticateToken, (req, res) => {
   const { targetUsername } = req.body;
   const senderName = req.user.username;
@@ -199,7 +192,6 @@ app.post('/api/friends/reject', authenticateToken, (req, res) => {
   res.json({ success: true });
 });
 
-// Отправка предложения
 app.post('/api/suggestions/send', authenticateToken, (req, res) => {
   const { text } = req.body;
   if (!text || !text.trim()) return res.status(400).json({ error: 'Введите текст предложения' });
@@ -307,7 +299,6 @@ app.post('/api/settings', authenticateToken, async (req, res) => {
   if (avatar !== undefined) user.avatar = avatar;
   if (dob !== undefined) user.dob = dob;
   if (newPassword) {
-    // Изменение 3: Проверка длины пароля (4-20) в настройках
     if (newPassword.length < 4 || newPassword.length > 20) {
       return res.status(400).json({ error: 'Длина пароля должна быть от 4 до 20 символов' });
     }
@@ -393,7 +384,8 @@ io.on('connection', (socket) => {
       let list = messagesStore.get(room);
       const idSet = new Set(messageIds);
 
-      messagesStore.set(room, list.filter(m => !(idSet.has(m.id) && (m.sender === username || isAdmin(username)))));
+      // Изменение 1: Удалять можно только свои сообщения (Проверка isAdmin убрана из условия удаления чужого)
+      messagesStore.set(room, list.filter(m => !(idSet.has(m.id) && m.sender === username)));
       io.to(room).emit('chat_history', messagesStore.get(room));
     } catch (e) {
       console.error('Delete error:', e);

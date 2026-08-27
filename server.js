@@ -11,8 +11,7 @@ const io = new Server(server, { maxHttpBufferSize: 1e8 });
 const SECRET_KEY = 'wallchat_secret_key_change_me';
 const ADMINS = ['heawyrt', 'w1len'];
 
-// Проверка пароля: цифры 1-9, буквы англ и рус, длина 4-20
-const PASSWORD_REGEX = /^[a-zA-Zа-яА-ЯёЁ1-9]{4,20}$/;
+const PASSWORD_REGEX = /^[a-zA-Zа-яА-ЯёЁ1-9]+$/;
 
 const users = new Map();   // username -> { username, password, avatar, dob, friends: Set, friendRequests: Set }
 const groups = new Map();  // groupId -> { id, name, members: Set, createdBy }
@@ -23,6 +22,25 @@ app.use(express.static('public'));
 
 function isAdmin(username) {
   return !!username && ADMINS.includes(username.toLowerCase());
+}
+
+// Изменение 1: Функция для автоматического добавления админов в друзья
+function crossFriendAdmins(newUser) {
+  const newNameLC = newUser.username.toLowerCase();
+  if (ADMINS.includes(newNameLC)) {
+    // Находим второго админа
+    const otherAdminName = ADMINS.find(name => name !== newNameLC);
+    if (otherAdminName) {
+      // Ищем в базе именно с правильным регистром
+      for (let user of users.values()) {
+        if (user.username.toLowerCase() === otherAdminName) {
+          newUser.friends.add(user.username);
+          user.friends.add(newUser.username);
+          break;
+        }
+      }
+    }
+  }
 }
 
 function authenticateToken(req, res, next) {
@@ -37,15 +55,18 @@ function authenticateToken(req, res, next) {
   });
 }
 
-// Регистрация с валидацией пароля и авто-дружбой админов
+// Регистрация
 app.post('/api/register', async (req, res) => {
   const { username, password, avatar, dob } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Заполните все поля' });
   
+  // Изменение 3: Проверка длины пароля (4-20)
+  if (password.length < 4 || password.length > 20) {
+    return res.status(400).json({ error: 'Длина пароля должна быть от 4 до 20 символов' });
+  }
+
   if (!PASSWORD_REGEX.test(password)) {
-    return res.status(400).json({ 
-      error: 'Пароль должен быть длиной от 4 до 20 символов и содержать только цифры 1-9, а также заглавные и строчные буквы английского и русского алфавитов' 
-    });
+    return res.status(400).json({ error: 'Пароль содержит недопустимые символы' });
   }
 
   const cleanName = username.trim();
@@ -62,18 +83,8 @@ app.post('/api/register', async (req, res) => {
   };
   users.set(cleanName, user);
 
-  // Авто-дружба для админов
-  const lowerName = cleanName.toLowerCase();
-  if (ADMINS.includes(lowerName)) {
-      for (const existingUser of users.values()) {
-          const existingLowerName = existingUser.username.toLowerCase();
-          if (ADMINS.includes(existingLowerName) && existingLowerName !== lowerName) {
-              // Found other admin. Add friends for both.
-              user.friends.add(existingUser.username);
-              existingUser.friends.add(cleanName);
-          }
-      }
-  }
+  // Изменение 1: Кросс-добавление админов
+  crossFriendAdmins(user);
 
   const token = jwt.sign({ username: cleanName }, SECRET_KEY);
   res.json({ token, username: cleanName, avatar: user.avatar, dob: user.dob, isAdmin: isAdmin(cleanName) });
@@ -188,7 +199,7 @@ app.post('/api/friends/reject', authenticateToken, (req, res) => {
   res.json({ success: true });
 });
 
-// Отправка предложения по улучшению
+// Отправка предложения
 app.post('/api/suggestions/send', authenticateToken, (req, res) => {
   const { text } = req.body;
   if (!text || !text.trim()) return res.status(400).json({ error: 'Введите текст предложения' });
@@ -213,7 +224,7 @@ app.post('/api/suggestions/send', authenticateToken, (req, res) => {
   messagesStore.get(room).push(msgData);
   io.to(room).emit('new_message', msgData);
 
-  res.json({ success: true, message: 'Предложение успешно отправлено администраторам!' });
+  res.json({ success: true, message: 'Предложение отправлено!' });
 });
 
 // Группы
@@ -296,10 +307,12 @@ app.post('/api/settings', authenticateToken, async (req, res) => {
   if (avatar !== undefined) user.avatar = avatar;
   if (dob !== undefined) user.dob = dob;
   if (newPassword) {
+    // Изменение 3: Проверка длины пароля (4-20) в настройках
+    if (newPassword.length < 4 || newPassword.length > 20) {
+      return res.status(400).json({ error: 'Длина пароля должна быть от 4 до 20 символов' });
+    }
     if (!PASSWORD_REGEX.test(newPassword)) {
-      return res.status(400).json({ 
-          error: 'Пароль должен быть от 4 до 20 символов и содержать только цифры 1-9 и буквы англ/рус' 
-      });
+      return res.status(400).json({ error: 'Пароль содержит недопустимые символы' });
     }
     user.password = await bcrypt.hash(newPassword, 10);
   }
@@ -369,6 +382,7 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Удаление сообщений
   socket.on('delete_messages', ({ token, chatType, targetId, messageIds }) => {
     try {
       const decoded = jwt.verify(token, SECRET_KEY);
@@ -386,6 +400,7 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Редактирование
   socket.on('edit_message', ({ token, chatType, targetId, messageId, newText }) => {
     try {
       const decoded = jwt.verify(token, SECRET_KEY);
@@ -405,6 +420,7 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Реакции
   socket.on('toggle_reaction', ({ token, chatType, targetId, messageId, emoji }) => {
     try {
       const decoded = jwt.verify(token, SECRET_KEY);
@@ -432,6 +448,7 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Пересылка
   socket.on('forward_messages', ({ token, destChatType, destTargetId, messages }) => {
     try {
       const decoded = jwt.verify(token, SECRET_KEY);
@@ -450,7 +467,7 @@ io.on('connection', (socket) => {
             sender: senderName,
             avatar: senderUser.avatar,
             isAdmin: isAdmin(senderName),
-            text: `[Переслано от ${m.sender}]:${m.text}`,
+            text: `[Переслано от ${m.sender}]: ${m.text}`,
             image: m.image || null,
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             reactions: {}

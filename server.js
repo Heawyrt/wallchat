@@ -11,8 +11,8 @@ const io = new Server(server, { maxHttpBufferSize: 1e8 });
 const SECRET_KEY = 'wallchat_secret_key_change_me';
 const ADMINS = ['heawyrt', 'w1len'];
 
-// Проверка пароля: цифры 1-9, буквы англ и рус
-const PASSWORD_REGEX = /^[a-zA-Zа-яА-ЯёЁ1-9]+$/;
+// Проверка пароля: цифры 1-9, буквы англ и рус, длина 4-20
+const PASSWORD_REGEX = /^[a-zA-Zа-яА-ЯёЁ1-9]{4,20}$/;
 
 const users = new Map();   // username -> { username, password, avatar, dob, friends: Set, friendRequests: Set }
 const groups = new Map();  // groupId -> { id, name, members: Set, createdBy }
@@ -37,14 +37,14 @@ function authenticateToken(req, res, next) {
   });
 }
 
-// Регистрация с валидацией пароля
+// Регистрация с валидацией пароля и авто-дружбой админов
 app.post('/api/register', async (req, res) => {
   const { username, password, avatar, dob } = req.body;
   if (!username || !password) return res.status(400).json({ error: 'Заполните все поля' });
   
   if (!PASSWORD_REGEX.test(password)) {
     return res.status(400).json({ 
-      error: 'Пароль может содержать только цифры 1-9, а также заглавные и прописные буквы английского и русского алфавитов' 
+      error: 'Пароль должен быть длиной от 4 до 20 символов и содержать только цифры 1-9, а также заглавные и строчные буквы английского и русского алфавитов' 
     });
   }
 
@@ -61,6 +61,19 @@ app.post('/api/register', async (req, res) => {
     friendRequests: new Set()
   };
   users.set(cleanName, user);
+
+  // Авто-дружба для админов
+  const lowerName = cleanName.toLowerCase();
+  if (ADMINS.includes(lowerName)) {
+      for (const existingUser of users.values()) {
+          const existingLowerName = existingUser.username.toLowerCase();
+          if (ADMINS.includes(existingLowerName) && existingLowerName !== lowerName) {
+              // Found other admin. Add friends for both.
+              user.friends.add(existingUser.username);
+              existingUser.friends.add(cleanName);
+          }
+      }
+  }
 
   const token = jwt.sign({ username: cleanName }, SECRET_KEY);
   res.json({ token, username: cleanName, avatar: user.avatar, dob: user.dob, isAdmin: isAdmin(cleanName) });
@@ -175,7 +188,7 @@ app.post('/api/friends/reject', authenticateToken, (req, res) => {
   res.json({ success: true });
 });
 
-// Отправка предложения по улучшению из настроек (для обычных пользователей)
+// Отправка предложения по улучшению
 app.post('/api/suggestions/send', authenticateToken, (req, res) => {
   const { text } = req.body;
   if (!text || !text.trim()) return res.status(400).json({ error: 'Введите текст предложения' });
@@ -284,7 +297,9 @@ app.post('/api/settings', authenticateToken, async (req, res) => {
   if (dob !== undefined) user.dob = dob;
   if (newPassword) {
     if (!PASSWORD_REGEX.test(newPassword)) {
-      return res.status(400).json({ error: 'Пароль содержит недопустимые символы' });
+      return res.status(400).json({ 
+          error: 'Пароль должен быть от 4 до 20 символов и содержать только цифры 1-9 и буквы англ/рус' 
+      });
     }
     user.password = await bcrypt.hash(newPassword, 10);
   }
@@ -354,7 +369,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Удаление одного или нескольких сообщений
   socket.on('delete_messages', ({ token, chatType, targetId, messageIds }) => {
     try {
       const decoded = jwt.verify(token, SECRET_KEY);
@@ -365,7 +379,6 @@ io.on('connection', (socket) => {
       let list = messagesStore.get(room);
       const idSet = new Set(messageIds);
 
-      // Удалять может либо отправитель, либо админ
       messagesStore.set(room, list.filter(m => !(idSet.has(m.id) && (m.sender === username || isAdmin(username)))));
       io.to(room).emit('chat_history', messagesStore.get(room));
     } catch (e) {
@@ -373,7 +386,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Редактирование сообщения
   socket.on('edit_message', ({ token, chatType, targetId, messageId, newText }) => {
     try {
       const decoded = jwt.verify(token, SECRET_KEY);
@@ -393,7 +405,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Реакции (Эмодзи)
   socket.on('toggle_reaction', ({ token, chatType, targetId, messageId, emoji }) => {
     try {
       const decoded = jwt.verify(token, SECRET_KEY);
@@ -421,7 +432,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Пересылка сообщений
   socket.on('forward_messages', ({ token, destChatType, destTargetId, messages }) => {
     try {
       const decoded = jwt.verify(token, SECRET_KEY);
@@ -440,7 +450,7 @@ io.on('connection', (socket) => {
             sender: senderName,
             avatar: senderUser.avatar,
             isAdmin: isAdmin(senderName),
-            text: `[Переслано от ${m.sender}]: ${m.text}`,
+            text: `[Переслано от ${m.sender}]:${m.text}`,
             image: m.image || null,
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             reactions: {}

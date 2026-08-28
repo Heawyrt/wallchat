@@ -281,7 +281,7 @@
           <button id="editSelectedBtn" onclick="editSelectedMessage()" class="secondary" style="padding:4px 10px; display:none;">✏ Редактировать</button>
           <button onclick="copySelectedMessages()" class="secondary" style="padding:4px 10px;">📋 Копировать</button>
           <button onclick="openForwardModal()" class="secondary" style="padding:4px 10px;">↪ Переслать</button>
-          <button onclick="deleteSelectedMessages()" class="secondary" style="background:#d32f2f; padding:4px 10px;">🗑 Удалить</button>
+          <button id="deleteSelectedBtn" onclick="deleteSelectedMessages()" class="secondary" style="background:#d32f2f; padding:4px 10px;">🗑 Удалить</button>
           <button onclick="clearSelection()" class="secondary" style="padding:4px 8px;">✕</button>
         </div>
       </div>
@@ -613,6 +613,154 @@
       }
     }
 
+    async function openGroupSettings() {
+      if (!activeChat || activeChat.type !== 'group') return;
+
+      await loadMyData();
+      const group = myData.groups.find(g => g.id === activeChat.id);
+      if (!group) return;
+
+      activeChat.groupData = group;
+      const isFounder = group.isFounder;
+
+      document.getElementById('editGroupNameInput').value = group.name;
+      document.getElementById('founderRenameSection').style.display = isFounder ? 'block' : 'none';
+      document.getElementById('deleteGroupBtn').style.display = isFounder ? 'block' : 'none';
+
+      const select = document.getElementById('addMemberSelect');
+      select.innerHTML = '<option value="">Выберите друга...</option>';
+      const currentMemberNames = group.members.map(m => m.username);
+      
+      const addableFriends = myData.friends.filter(f => !currentMemberNames.includes(f.username));
+      addableFriends.forEach(f => {
+        const opt = document.createElement('option');
+        opt.value = f.username;
+        opt.textContent = f.username;
+        select.appendChild(opt);
+      });
+
+      const membersList = document.getElementById('groupMembersList');
+      membersList.innerHTML = '';
+      
+      group.members.forEach(m => {
+        const div = document.createElement('div');
+        div.className = 'member-item';
+        
+        let removeBtnHTML = '';
+        if (isFounder && m.username !== currentUser.username) {
+          removeBtnHTML = `<button onclick="removeMemberFromGroup('${m.username}')" class="secondary" style="background:#d32f2f; padding:2px 8px; font-size:0.75rem;">Удалить</button>`;
+        }
+
+        div.innerHTML = `
+          <span>${m.username} ${m.isFounder ? '<span class="founder-badge">Founder</span>' : ''} ${m.isAdmin ? adminCheckmarkSVG : ''}</span>
+          ${removeBtnHTML}
+        `;
+        membersList.appendChild(div);
+      });
+
+      toggleModal('groupSettingsModal', true);
+    }
+
+    async function addMemberToGroup() {
+      if (!activeChat || activeChat.type !== 'group') return;
+      const select = document.getElementById('addMemberSelect');
+      const targetUsername = select.value;
+      if (!targetUsername) return alert('Выберите друга из списка');
+
+      const res = await fetch('/api/groups/add-member', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ groupId: activeChat.id, targetUsername })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        await openGroupSettings();
+      } else {
+        alert(data.error || 'Ошибка при добавлении');
+      }
+    }
+
+    async function removeMemberFromGroup(targetUsername) {
+      if (!activeChat || activeChat.type !== 'group') return;
+      if (!confirm(`Удалить ${targetUsername} из группы?`)) return;
+
+      const res = await fetch('/api/groups/remove-member', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ groupId: activeChat.id, targetUsername })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        await openGroupSettings();
+      } else {
+        alert(data.error || 'Ошибка при удалении');
+      }
+    }
+
+    async function renameGroup() {
+      if (!activeChat || activeChat.type !== 'group') return;
+      const newName = document.getElementById('editGroupNameInput').value.trim();
+      if (!newName) return alert('Введите новое название');
+
+      const res = await fetch('/api/groups/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ groupId: activeChat.id, newName })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        activeChat.name = newName;
+        document.getElementById('activeChatName').innerHTML = `${newName}`;
+        await openGroupSettings();
+        renderSidebar();
+      } else {
+        alert(data.error || 'Ошибка при переименовании');
+      }
+    }
+
+    async function leaveGroup() {
+      if (!activeChat || activeChat.type !== 'group') return;
+      if (!confirm('Вы уверены, что хотите покинуть группу?')) return;
+
+      const res = await fetch('/api/groups/leave', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ groupId: activeChat.id })
+      });
+
+      if (res.ok) {
+        toggleModal('groupSettingsModal', false);
+        closeChatView();
+        await loadMyData();
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Ошибка');
+      }
+    }
+
+    async function deleteGroup() {
+      if (!activeChat || activeChat.type !== 'group') return;
+      if (!confirm('Вы уверены, что хотите полностью удалить группу?')) return;
+
+      const res = await fetch('/api/groups/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ groupId: activeChat.id })
+      });
+
+      if (res.ok) {
+        toggleModal('groupSettingsModal', false);
+        closeChatView();
+        await loadMyData();
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Ошибка');
+      }
+    }
+
     function openChat(chat) {
       activeChat = chat;
       clearSelection();
@@ -664,16 +812,25 @@
       const bar = document.getElementById('selectionBar');
       const count = document.getElementById('selectedCount');
       const editBtn = document.getElementById('editSelectedBtn');
+      const deleteBtn = document.getElementById('deleteSelectedBtn');
 
       if (selectedMsgIds.size > 0) {
         bar.style.display = 'flex';
         count.textContent = selectedMsgIds.size;
 
+        const selectedMsgs = currentHistory.filter(m => selectedMsgIds.has(m.id));
+        const hasOtherUserMsgs = selectedMsgs.some(m => m.sender !== currentUser.username);
+
+        // Если выделили чужое сообщение - скрываем кнопку удаления полностью
+        if (deleteBtn) {
+          deleteBtn.style.display = hasOtherUserMsgs ? 'none' : 'inline-block';
+        }
+
         if (selectedMsgIds.size === 1) {
           const firstId = Array.from(selectedMsgIds)[0];
           const msg = currentHistory.find(m => m.id === firstId);
           if (msg && msg.sender === currentUser.username) {
-            editBtn.style.display = 'block';
+            editBtn.style.display = 'inline-block';
           } else {
             editBtn.style.display = 'none';
           }
@@ -754,18 +911,14 @@
     }
 
     function deleteSelectedMessages() {
-      // Разрешаем удаление только собственных сообщений
       const mySelectedIds = Array.from(selectedMsgIds).filter(id => {
         const msg = currentHistory.find(m => m.id === id);
         return msg && msg.sender === currentUser.username;
       });
 
-      if (mySelectedIds.length === 0) {
-        alert('Вы можете удалять только свои сообщения!');
-        return;
-      }
+      if (mySelectedIds.length === 0) return;
 
-      if (!confirm('Удалить выбранные свои сообщения?')) return;
+      if (!confirm('Удалить выбранные сообщения?')) return;
       socket.emit('delete_messages', {
         token: currentUser.token,
         chatType: activeChat.type,

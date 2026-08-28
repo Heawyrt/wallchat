@@ -2,16 +2,17 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
 
-// Настройка Socket.IO с поддержкой CORS и увеличенным буфером
+// Настройка Socket.IO с поддержкой CORS и увеличенным буфером до 10MB
 const io = new Server(server, {
-  maxHttpBufferSize: 1e7, // До 10MB для передаваемых файлов/аватарок
+  maxHttpBufferSize: 1e7,
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
+    origin: '*',
+    methods: ['GET', 'POST']
   }
 });
 
@@ -29,7 +30,10 @@ app.use((req, res, next) => {
 // Парсинг JSON и URL-encoded данных большого размера
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
+
+// Раздача статики из корня и из папки public
 app.use(express.static(__dirname));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // База данных в памяти
 const users = {
@@ -80,7 +84,7 @@ app.post('/api/register', (req, res) => {
   try {
     const { username, password, avatar, dob } = req.body || {};
     if (!username || !password) return res.status(400).json({ error: 'Заполните все поля' });
-    
+
     const cleanUsername = username.trim();
     if (users[cleanUsername]) return res.status(400).json({ error: 'Пользователь уже существует' });
 
@@ -208,7 +212,6 @@ app.post('/api/suggestions/send', (req, res) => {
     if (!roomMessages['suggestions']) roomMessages['suggestions'] = [];
     roomMessages['suggestions'].push(msgObj);
 
-    // Уведомляем администраторов
     SYSTEM_ADMINS.forEach(admin => {
       io.to(`user_${admin}`).emit('new_message', msgObj);
     });
@@ -229,7 +232,7 @@ app.post('/api/friends/request', (req, res) => {
 
     if (!target) return res.status(404).json({ error: 'Пользователь не найден' });
     if (targetUsername === user.username) return res.status(400).json({ error: 'Нельзя добавить самого себя' });
-    
+
     if (!Array.isArray(user.friends)) user.friends = [];
     if (!Array.isArray(target.friendRequests)) target.friendRequests = [];
 
@@ -307,16 +310,23 @@ app.post('/api/groups/create', (req, res) => {
   }
 });
 
-// Обобщенный роут на случай запроса HTML статики
+// Автоматический поиск index.html в корне или в папке public
 app.get('*', (req, res) => {
   if (!req.path.startsWith('/api')) {
-    res.sendFile(path.join(__dirname, 'index.html'), (err) => {
-      if (err) res.status(404).send('Файл index.html не найден');
-    });
+    const rootIndex = path.join(__dirname, 'index.html');
+    const publicIndex = path.join(__dirname, 'public', 'index.html');
+
+    if (fs.existsSync(rootIndex)) {
+      return res.sendFile(rootIndex);
+    } else if (fs.existsSync(publicIndex)) {
+      return res.sendFile(publicIndex);
+    } else {
+      return res.status(404).send('Ошибка: файл index.html не найден ни в корневом каталоге, ни в папке public.');
+    }
   }
 });
 
-// Глобальный обработчик ошибок Express
+// Глобальная обработка ошибок Express
 app.use((err, req, res, next) => {
   console.error('Ошибка сервера:', err);
   res.status(500).json({ error: 'Произошла внутренняя ошибка сервера' });

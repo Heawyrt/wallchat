@@ -37,6 +37,7 @@ const groupSchema = new mongoose.Schema({
   id: { type: String, unique: true, required: true },
   name: { type: String, required: true },
   createdBy: { type: String, required: true },
+  type: { type: String, default: 'group' }, // 'group' или 'channel'
   members: [{ type: String }]
 });
 
@@ -50,7 +51,8 @@ const messageSchema = new mongoose.Schema({
   image: { type: String, default: null },
   time: { type: String, required: true },
   replyTo: { type: Object, default: null },
-  reactions: { type: Map, of: [String], default: {} },
+  reactions: { type: Object, default: {} },
+  comments: { type: Array, default: [] },
   edited: { type: Boolean, default: false }
 });
 
@@ -78,6 +80,60 @@ function authenticateToken(req, res, next) {
 }
 
 // REST API Маршруты
+
+// Обновление настроек профиля (Аватар, Пароль, Дата рождения)
+app.post('/api/settings/update', authenticateToken, async (req, res) => {
+  try {
+    const { dob, avatar, password } = req.body;
+    const user = await User.findOne({ username: req.user.username });
+    if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+
+    if (dob !== undefined) user.dob = dob;
+    if (avatar !== undefined) user.avatar = avatar;
+
+    if (password) {
+      if (password.length < 4 || password.length > 20 || !PASSWORD_REGEX.test(password)) {
+        return res.status(400).json({ error: 'Пароль должен быть от 4 до 20 символов (буквы и цифры)' });
+      }
+      user.password = await bcrypt.hash(password, 10);
+    }
+
+    await user.save();
+
+    if (avatar !== undefined) {
+      await Message.updateMany({ sender: req.user.username }, { avatar: user.avatar });
+    }
+
+    res.json({ success: true, avatar: user.avatar, dob: user.dob });
+  } catch (err) {
+    res.status(500).json({ error: 'Ошибка обновления настроек' });
+  }
+});
+
+// Отправка предложений администраторам
+app.post('/api/suggestions/send', authenticateToken, async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text || !text.trim()) return res.status(400).json({ error: 'Введите текст' });
+
+    const senderUser = await User.findOne({ username: req.user.username });
+    const room = 'suggestions_room';
+
+    await Message.create({
+      id: Date.now() + Math.random(),
+      room,
+      sender: req.user.username,
+      avatar: senderUser ? senderUser.avatar : null,
+      isAdmin: isAdmin(req.user.username),
+      text: text.trim(),
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    });
+
+    res.json({ success: true, message: 'Ваша идея успешно отправлена!' });
+  } catch (err) {
+    res.status(500).json({ error: 'Ошибка отправки предложения' });
+  }
+});
 
 // Регистрация
 app.post('/api/register', async (req, res) => {
@@ -157,6 +213,7 @@ app.get('/api/me', authenticateToken, async (req, res) => {
       return {
         id: g.id,
         name: g.name,
+        type: g.type || 'group',
         createdBy: g.createdBy,
         isFounder: g.createdBy === req.user.username,
         members: membersData.map(m => ({
@@ -240,24 +297,45 @@ app.post('/api/groups/create', authenticateToken, async (req, res) => {
     }
 
     const groupId = 'group_' + Date.now();
-    const group = await Group.create({ id: groupId, name: groupName.trim(), createdBy: creator, members: Array.from(membersSet) });
+    const group = await Group.create({ id: groupId, name: groupName.trim(), createdBy: creator, type: 'group', members: Array.from(membersSet) });
     res.json({ success: true, group });
   } catch (err) {
     res.status(500).json({ error: 'Ошибка создания группы' });
   }
 });
 
-// Добавление участника в группу (из друзей)
+// Создание канала
+app.post('/api/channels/create', authenticateToken, async (req, res) => {
+  try {
+    const { channelName, memberUsernames } = req.body;
+    const creator = req.user.username;
+    if (!channelName || !channelName.trim()) return res.status(400).json({ error: 'Укажите название канала' });
+
+    const creatorUser = await User.findOne({ username: creator });
+    const membersSet = new Set([creator]);
+    if (Array.isArray(memberUsernames)) {
+      memberUsernames.forEach(m => { if (creatorUser.friends.includes(m)) membersSet.add(m); });
+    }
+
+    const channelId = 'channel_' + Date.now();
+    const channel = await Group.create({ id: channelId, name: channelName.trim(), createdBy: creator, type: 'channel', members: Array.from(membersSet) });
+    res.json({ success: true, channel });
+  } catch (err) {
+    res.status(500).json({ error: 'Ошибка создания канала' });
+  }
+});
+
+// Добавление участника в группу / канал (из друзей)
 app.post('/api/groups/add-member', authenticateToken, async (req, res) => {
   try {
     const { groupId, targetUsername } = req.body;
     const requester = req.user.username;
 
     const group = await Group.findOne({ id: groupId });
-    if (!group) return res.status(404).json({ error: 'Группа не найдена' });
+    if (!group) return res.status(404).json({ error: 'Группа/Канал не найден(а)' });
 
     if (!group.members.includes(requester)) {
-      return res.status(403).json({ error: 'Вы не состоите в этой группе' });
+      return res.status(403).json({ error: 'Вы не состоите в этом сообществе' });
     }
 
     const requesterUser = await User.findOne({ username: requester });
@@ -266,28 +344,28 @@ app.post('/api/groups/add-member', authenticateToken, async (req, res) => {
     }
 
     if (group.members.includes(targetUsername)) {
-      return res.status(400).json({ error: 'Пользователь уже в группе' });
+      return res.status(400).json({ error: 'Пользователь уже добавлен' });
     }
 
     group.members.push(targetUsername);
     await group.save();
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: 'Ошибка при добавлении участника в группу' });
+    res.status(500).json({ error: 'Ошибка при добавлении участника' });
   }
 });
 
-// Удаление участника из группы (доступно только Founder)
+// Удаление участника из группы / канала (доступно только Founder)
 app.post('/api/groups/remove-member', authenticateToken, async (req, res) => {
   try {
     const { groupId, targetUsername } = req.body;
     const requester = req.user.username;
 
     const group = await Group.findOne({ id: groupId });
-    if (!group) return res.status(404).json({ error: 'Группа не найдена' });
+    if (!group) return res.status(404).json({ error: 'Группа/Канал не найден(а)' });
 
     if (group.createdBy !== requester) {
-      return res.status(403).json({ error: 'Удалять участников может только создатель (Founder) группы' });
+      return res.status(403).json({ error: 'Удалять участников может только создатель (Founder)' });
     }
 
     if (targetUsername === group.createdBy) {
@@ -298,18 +376,18 @@ app.post('/api/groups/remove-member', authenticateToken, async (req, res) => {
     await group.save();
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: 'Ошибка при удалении участника из группы' });
+    res.status(500).json({ error: 'Ошибка при удалении участника' });
   }
 });
 
-// Переименование группы (доступно только Founder)
+// Переименование группы / канала (доступно только Founder)
 app.post('/api/groups/rename', authenticateToken, async (req, res) => {
   try {
     const { groupId, newName } = req.body;
     const requester = req.user.username;
 
     const group = await Group.findOne({ id: groupId });
-    if (!group) return res.status(404).json({ error: 'Группа не найдена' });
+    if (!group) return res.status(404).json({ error: 'Группа/Канал не найден(а)' });
 
     if (group.createdBy !== requester) {
       return res.status(403).json({ error: 'Изменять название может только создатель (Founder)' });
@@ -319,44 +397,44 @@ app.post('/api/groups/rename', authenticateToken, async (req, res) => {
     await group.save();
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: 'Ошибка при переименовании группы' });
+    res.status(500).json({ error: 'Ошибка при переименовании' });
   }
 });
 
-// Выход из группы
+// Выход из группы / канала
 app.post('/api/groups/leave', authenticateToken, async (req, res) => {
   try {
     const { groupId } = req.body;
     const requester = req.user.username;
 
     const group = await Group.findOne({ id: groupId });
-    if (!group) return res.status(404).json({ error: 'Группа не найдена' });
+    if (!group) return res.status(404).json({ error: 'Группа/Канал не найден(а)' });
 
     group.members = group.members.filter(m => m !== requester);
     await group.save();
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: 'Ошибка при выходе из группы' });
+    res.status(500).json({ error: 'Ошибка при выходе' });
   }
 });
 
-// Удаление группы (доступно только Founder)
+// Удаление группы / канала (доступно только Founder)
 app.post('/api/groups/delete', authenticateToken, async (req, res) => {
   try {
     const { groupId } = req.body;
     const requester = req.user.username;
 
     const group = await Group.findOne({ id: groupId });
-    if (!group) return res.status(404).json({ error: 'Группа не найдена' });
+    if (!group) return res.status(404).json({ error: 'Группа/Канал не найден(а)' });
 
     if (group.createdBy !== requester) {
-      return res.status(403).json({ error: 'Удалить группу может только ее создатель' });
+      return res.status(403).json({ error: 'Удалить может только создатель' });
     }
 
     await Group.deleteOne({ id: groupId });
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: 'Ошибка при удалении группы' });
+    res.status(500).json({ error: 'Ошибка при удалении' });
   }
 });
 
@@ -365,7 +443,7 @@ function getRoomId(chatType, targetId, username) {
   if (chatType === 'saved') return 'saved_' + username;
   if (chatType === 'suggestions' && isAdmin(username)) return 'suggestions_room';
   if (chatType === 'dm') return [username, targetId].sort().join('_');
-  if (chatType === 'group') return targetId;
+  if (chatType === 'group' || chatType === 'channel') return targetId;
   return null;
 }
 
@@ -388,32 +466,112 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('send_message', async ({ token, chatType, targetId, text, image, replyTo }) => {
+  socket.on('send_message', async ({ token, chatType, targetId, text, image, replyTo, editMsgId }) => {
     try {
       const decoded = jwt.verify(token, SECRET_KEY);
       const senderUser = await User.findOne({ username: decoded.username });
       if (!senderUser) return;
 
       const room = getRoomId(chatType, targetId, decoded.username);
-      if (room) {
-        const msgData = await Message.create({
-          id: Date.now() + Math.random(),
-          room,
-          sender: decoded.username,
-          avatar: senderUser.avatar,
-          isAdmin: isAdmin(decoded.username),
-          text: text || '',
-          image: image || null,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          replyTo: replyTo || null,
-          reactions: {},
-          edited: false
-        });
+      if (!room) return;
 
-        io.to(room).emit('new_message', msgData);
+      if (chatType === 'channel') {
+        const channel = await Group.findOne({ id: targetId });
+        if (channel && channel.createdBy !== decoded.username) {
+          return;
+        }
       }
+
+      if (editMsgId) {
+        const existingMsg = await Message.findOne({ id: editMsgId, sender: decoded.username, room });
+        if (existingMsg) {
+          existingMsg.text = text || existingMsg.text;
+          existingMsg.edited = true;
+          await existingMsg.save();
+          const updatedHistory = await Message.find({ room }).sort({ id: 1 });
+          io.to(room).emit('chat_history', updatedHistory);
+          return;
+        }
+      }
+
+      const msgData = await Message.create({
+        id: Date.now() + Math.random(),
+        room,
+        sender: decoded.username,
+        avatar: senderUser.avatar,
+        isAdmin: isAdmin(decoded.username),
+        text: text || '',
+        image: image || null,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        replyTo: replyTo || null,
+        reactions: {},
+        comments: [],
+        edited: false
+      });
+
+      io.to(room).emit('new_message', msgData);
     } catch (e) {
       console.error('Socket send_message error:', e);
+    }
+  });
+
+  socket.on('add_reaction', async ({ token, chatType, targetId, messageId, emoji }) => {
+    try {
+      const decoded = jwt.verify(token, SECRET_KEY);
+      const room = getRoomId(chatType, targetId, decoded.username);
+      if (!room) return;
+
+      const msg = await Message.findOne({ id: messageId, room });
+      if (!msg) return;
+
+      let reactionsObj = msg.reactions || {};
+      let users = reactionsObj[emoji] || [];
+
+      if (users.includes(decoded.username)) {
+        users = users.filter(u => u !== decoded.username);
+      } else {
+        users.push(decoded.username);
+      }
+
+      if (users.length > 0) {
+        reactionsObj[emoji] = users;
+      } else {
+        delete reactionsObj[emoji];
+      }
+
+      msg.reactions = reactionsObj;
+      msg.markModified('reactions');
+      await msg.save();
+
+      io.to(room).emit('reaction_updated', { messageId: msg.id, reactions: msg.reactions });
+    } catch (e) {
+      console.error('Socket add_reaction error:', e);
+    }
+  });
+
+  socket.on('add_comment', async ({ token, chatType, targetId, messageId, text }) => {
+    try {
+      const decoded = jwt.verify(token, SECRET_KEY);
+      const room = getRoomId(chatType, targetId, decoded.username);
+      if (!room || !text || !text.trim()) return;
+
+      const msg = await Message.findOne({ id: messageId, room });
+      if (!msg) return;
+
+      const newComment = {
+        id: Date.now() + Math.random(),
+        sender: decoded.username,
+        text: text.trim(),
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+
+      msg.comments.push(newComment);
+      msg.markModified('comments');
+      await msg.save();
+
+      io.to(room).emit('comment_added', { messageId: msg.id, comments: msg.comments });
+    } catch (e) {
+      console.error('Socket add_comment error:', e);
     }
   });
 

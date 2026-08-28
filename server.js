@@ -79,7 +79,7 @@ function authenticateToken(req, res, next) {
 
 // REST API Маршруты
 
-// Регистрация с авто-добавлением heawyrt и w1len в друзья
+// Регистрация с авто-добавлением в друзья ТОЛЬКО между heawyrt и w1len
 app.post('/api/register', async (req, res) => {
   try {
     const { username, password, avatar, dob } = req.body;
@@ -92,8 +92,21 @@ app.post('/api/register', async (req, res) => {
     const existingUser = await User.findOne({ username: cleanName });
     if (existingUser) return res.status(400).json({ error: 'Пользователь уже существует' });
 
-    // Авто-дружба с админами heawyrt и w1len
-    const defaultFriends = ADMINS.filter(admin => admin.toLowerCase() !== cleanName.toLowerCase());
+    const lowerName = cleanName.toLowerCase();
+    let defaultFriends = [];
+
+    // Авто-дружба только если регистрируется heawyrt или w1len и второй уже зарегистрирован
+    if (ADMINS.map(a => a.toLowerCase()).includes(lowerName)) {
+      const otherAdminName = ADMINS.find(admin => admin.toLowerCase() !== lowerName);
+      const otherAdmin = await User.findOne({ username: new RegExp(`^${otherAdminName}$`, 'i') });
+      if (otherAdmin) {
+        defaultFriends.push(otherAdmin.username);
+        await User.updateOne(
+          { _id: otherAdmin._id },
+          { $addToSet: { friends: cleanName } }
+        );
+      }
+    }
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = await User.create({
@@ -104,12 +117,6 @@ app.post('/api/register', async (req, res) => {
       friends: defaultFriends,
       friendRequests: []
     });
-
-    // Добавляем зарегистрированного пользователя в друзья к самим админам
-    await User.updateMany(
-      { username: { $in: ADMINS }, username: { $ne: cleanName } },
-      { $addToSet: { friends: cleanName } }
-    );
 
     const token = jwt.sign({ username: cleanName }, SECRET_KEY);
     res.json({ token, username: cleanName, avatar: user.avatar, dob: user.dob, isAdmin: isAdmin(cleanName) });
@@ -303,6 +310,7 @@ io.on('connection', (socket) => {
       const decoded = jwt.verify(token, SECRET_KEY);
       const room = getRoomId(chatType, targetId, decoded.username);
       if (room && Array.isArray(messageIds)) {
+        // Удаляем только те сообщения, отправителем которых является сам пользователь
         await Message.deleteMany({ id: { $in: messageIds }, sender: decoded.username, room });
         const updatedHistory = await Message.find({ room }).sort({ id: 1 });
         io.to(room).emit('chat_history', updatedHistory);

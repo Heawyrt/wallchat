@@ -1,455 +1,317 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const path = require('path');
-const fs = require('fs');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 
 const app = express();
 const server = http.createServer(app);
+const io = new Server(server, { maxHttpBufferSize: 1e8 });
 
-// Настройка Socket.IO с поддержкой CORS и увеличенным буфером до 10MB
-const io = new Server(server, {
-  maxHttpBufferSize: 1e7,
-  cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
-  }
+const SECRET_KEY = process.env.SECRET_KEY || 'wallchat_secret_key_change_me';
+const MONGO_URI = process.env.MONGO_URI;
+const ADMINS = ['heawyrt', 'w1len'];
+const PASSWORD_REGEX = /^[a-zA-Zа-яА-ЯёЁ1-9]+$/;
+
+// Подключение к MongoDB
+if (MONGO_URI) {
+  mongoose.connect(MONGO_URI)
+    .then(() => console.log('Подключение к MongoDB успешно'))
+    .catch(err => console.error('Ошибка подключения к MongoDB:', err));
+} else {
+  console.error('Ошибка: Переменная MONGO_URI не задана!');
+}
+
+// Mongoose схемы
+const userSchema = new mongoose.Schema({
+  username: { type: String, unique: true, required: true },
+  password: { type: String, required: true },
+  avatar: { type: String, default: null },
+  dob: { type: String, default: null },
+  friends: [{ type: String }],
+  friendRequests: [{ type: String }]
 });
 
-// Настройка заголовков CORS для REST API
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  next();
+const groupSchema = new mongoose.Schema({
+  id: { type: String, unique: true, required: true },
+  name: { type: String, required: true },
+  createdBy: { type: String, required: true },
+  members: [{ type: String }]
 });
 
-// Парсинг JSON и URL-encoded данных большого размера
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
+const messageSchema = new mongoose.Schema({
+  id: { type: Number, required: true },
+  room: { type: String, required: true },
+  sender: { type: String, required: true },
+  avatar: { type: String, default: null },
+  isAdmin: { type: Boolean, default: false },
+  text: { type: String, default: '' },
+  image: { type: String, default: null },
+  time: { type: String, required: true },
+  replyTo: { type: Object, default: null },
+  reactions: { type: Map, of: [String], default: {} },
+  edited: { type: Boolean, default: false }
+});
 
-// Раздача статики из корня и из папки public
-app.use(express.static(__dirname));
-app.use(express.static(path.join(__dirname, 'public')));
+const User = mongoose.model('User', userSchema);
+const Group = mongoose.model('Group', groupSchema);
+const Message = mongoose.model('Message', messageSchema);
 
-// База данных в памяти
-const users = {
-  heawyrt: { username: 'heawyrt', password: '123', isAdmin: true, avatar: null, dob: null, friends: ['w1len'], friendRequests: [] },
-  w1len: { username: 'w1len', password: '123', isAdmin: true, avatar: null, dob: null, friends: ['heawyrt'], friendRequests: [] }
-};
+app.use(express.json({ limit: '50mb' }));
+app.use(express.static('public'));
 
-const SYSTEM_ADMINS = ['heawyrt', 'w1len'];
-const groups = {}; // id -> { id, name, founder, members: [] }
-const roomMessages = {}; // roomKey -> [ msgObj ]
-const tokens = {}; // token -> username
+function isAdmin(username) {
+  return !!username && ADMINS.includes(username.toLowerCase());
+}
 
-// Вспомогательные функции
-function ensureAutoFriends(userObj) {
-  if (!userObj) return;
-  if (!Array.isArray(userObj.friends)) userObj.friends = [];
-  if (!Array.isArray(userObj.friendRequests)) userObj.friendRequests = [];
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'Токен отсутствует' });
 
-  SYSTEM_ADMINS.forEach(adminName => {
-    if (userObj.username !== adminName) {
-      if (!userObj.friends.includes(adminName)) {
-        userObj.friends.push(adminName);
-      }
-      if (users[adminName]) {
-        if (!Array.isArray(users[adminName].friends)) users[adminName].friends = [];
-        if (!users[adminName].friends.includes(userObj.username)) {
-          users[adminName].friends.push(userObj.username);
-        }
-      }
-    }
+  jwt.verify(token, SECRET_KEY, (err, user) => {
+    if (err) return res.status(403).json({ error: 'Недействительный токен' });
+    req.user = user;
+    next();
   });
 }
 
-function getDMRoomId(user1, user2) {
-  return [user1, user2].sort().join('_');
-}
-
-function getUserByToken(req) {
-  const auth = req.headers.authorization;
-  if (!auth) return null;
-  const token = auth.replace('Bearer ', '').trim();
-  const username = tokens[token];
-  return users[username] || null;
-}
-
 // REST API Маршруты
-app.post('/api/register', (req, res) => {
+
+// Регистрация с авто-добавлением heawyrt и w1len в друзья
+app.post('/api/register', async (req, res) => {
   try {
-    const { username, password, avatar, dob } = req.body || {};
+    const { username, password, avatar, dob } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Заполните все поля' });
+    if (password.length < 4 || password.length > 20 || !PASSWORD_REGEX.test(password)) {
+      return res.status(400).json({ error: 'Некорректный пароль' });
+    }
 
-    const cleanUsername = username.trim();
-    if (users[cleanUsername]) return res.status(400).json({ error: 'Пользователь уже существует' });
+    const cleanName = username.trim();
+    const existingUser = await User.findOne({ username: cleanName });
+    if (existingUser) return res.status(400).json({ error: 'Пользователь уже существует' });
 
-    const newUser = {
-      username: cleanUsername,
-      password,
+    // Авто-дружба с админами heawyrt и w1len
+    const defaultFriends = ADMINS.filter(admin => admin.toLowerCase() !== cleanName.toLowerCase());
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = await User.create({
+      username: cleanName,
+      password: hashedPassword,
       avatar: avatar || null,
       dob: dob || null,
-      isAdmin: SYSTEM_ADMINS.includes(cleanUsername),
-      friends: [],
+      friends: defaultFriends,
       friendRequests: []
-    };
+    });
 
-    ensureAutoFriends(newUser);
-    users[cleanUsername] = newUser;
+    // Добавляем зарегистрированного пользователя в друзья к самим админам
+    await User.updateMany(
+      { username: { $in: ADMINS }, username: { $ne: cleanName } },
+      { $addToSet: { friends: cleanName } }
+    );
 
-    const token = 'token_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-    tokens[token] = cleanUsername;
-
-    res.json({ username: newUser.username, token, isAdmin: newUser.isAdmin, avatar: newUser.avatar });
+    const token = jwt.sign({ username: cleanName }, SECRET_KEY);
+    res.json({ token, username: cleanName, avatar: user.avatar, dob: user.dob, isAdmin: isAdmin(cleanName) });
   } catch (err) {
     res.status(500).json({ error: 'Ошибка сервера при регистрации' });
   }
 });
 
-app.post('/api/login', (req, res) => {
+// Вход
+app.post('/api/login', async (req, res) => {
   try {
-    const { username, password } = req.body || {};
-    if (!username || !password) return res.status(400).json({ error: 'Укажите логин и пароль' });
+    const { username, password } = req.body;
+    const cleanName = (username || '').trim();
+    const user = await User.findOne({ username: cleanName });
 
-    const cleanUsername = username.trim();
-    const user = users[cleanUsername];
-
-    if (!user || user.password !== password) {
-      return res.status(400).json({ error: 'Неверный логин или пароль' });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return res.status(400).json({ error: 'Неверное имя или пароль' });
     }
 
-    ensureAutoFriends(user);
-
-    const token = 'token_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-    tokens[token] = cleanUsername;
-
-    res.json({ username: user.username, token, isAdmin: user.isAdmin, avatar: user.avatar });
+    const token = jwt.sign({ username: cleanName }, SECRET_KEY);
+    res.json({ token, username: cleanName, avatar: user.avatar, dob: user.dob, isAdmin: isAdmin(cleanName) });
   } catch (err) {
     res.status(500).json({ error: 'Ошибка сервера при входе' });
   }
 });
 
-app.get('/api/me', (req, res) => {
+// Загрузка данных пользователя и списков
+app.get('/api/me', authenticateToken, async (req, res) => {
   try {
-    const user = getUserByToken(req);
-    if (!user) return res.status(401).json({ error: 'Не авторизован' });
+    const user = await User.findOne({ username: req.user.username });
+    if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
 
-    ensureAutoFriends(user);
+    const friendsList = await User.find({ username: { $in: user.friends } }, 'username avatar');
+    const requestsList = await User.find({ username: { $in: user.friendRequests } }, 'username avatar');
+    const userGroupsRaw = await Group.find({ members: req.user.username });
 
-    const friendsData = user.friends.map(f => ({
-      username: f,
-      avatar: users[f]?.avatar || null,
-      isAdmin: users[f]?.isAdmin || false
-    }));
-
-    const requestsData = user.friendRequests.map(r => ({
-      username: r,
-      avatar: users[r]?.avatar || null
-    }));
-
-    const userGroups = Object.values(groups)
-      .filter(g => g && Array.isArray(g.members) && g.members.includes(user.username))
-      .map(g => ({
+    const groupsList = await Promise.all(userGroupsRaw.map(async (g) => {
+      const membersData = await User.find({ username: { $in: g.members } }, 'username avatar');
+      return {
         id: g.id,
         name: g.name,
-        isFounder: g.founder === user.username
-      }));
+        createdBy: g.createdBy,
+        isFounder: g.createdBy === req.user.username,
+        members: membersData.map(m => ({
+          username: m.username,
+          avatar: m.avatar,
+          isFounder: m.username === g.createdBy,
+          isAdmin: isAdmin(m.username)
+        }))
+      };
+    }));
 
     res.json({
       username: user.username,
       avatar: user.avatar,
       dob: user.dob,
-      isAdmin: user.isAdmin,
-      friends: friendsData,
-      friendRequests: requestsData,
-      groups: userGroups
+      isAdmin: isAdmin(user.username),
+      friends: friendsList.map(f => ({ username: f.username, avatar: f.avatar, isAdmin: isAdmin(f.username) })),
+      friendRequests: requestsList.map(r => ({ username: r.username, avatar: r.avatar, isAdmin: isAdmin(r.username) })),
+      groups: groupsList
     });
   } catch (err) {
     res.status(500).json({ error: 'Ошибка получения данных профиля' });
   }
 });
 
-app.post('/api/settings/update', (req, res) => {
+// Отправка заявки в друзья
+app.post('/api/friends/request', authenticateToken, async (req, res) => {
   try {
-    const user = getUserByToken(req);
-    if (!user) return res.status(401).json({ error: 'Не авторизован' });
+    const { targetUsername } = req.body;
+    const senderName = req.user.username;
+    const targetName = (targetUsername || '').trim();
 
-    const { dob, avatar, password } = req.body || {};
-    if (dob !== undefined) user.dob = dob;
-    if (avatar !== undefined) user.avatar = avatar;
-    if (password) user.password = password;
+    if (senderName === targetName) return res.status(400).json({ error: 'Нельзя добавить самого себя' });
+    const targetUser = await User.findOne({ username: targetName });
+    if (!targetUser) return res.status(404).json({ error: 'Пользователь не найден' });
 
-    res.json({ success: true, avatar: user.avatar, dob: user.dob });
+    const senderUser = await User.findOne({ username: senderName });
+    if (senderUser.friends.includes(targetName)) return res.status(400).json({ error: 'Уже в друзьях' });
+    if (targetUser.friendRequests.includes(senderName)) return res.status(400).json({ error: 'Заявка уже отправлена' });
+
+    targetUser.friendRequests.push(senderName);
+    await targetUser.save();
+    res.json({ success: true, message: `Заявка отправлена пользователю ${targetName}` });
   } catch (err) {
-    res.status(500).json({ error: 'Ошибка обновления настроек' });
+    res.status(500).json({ error: 'Ошибка отправки заявки' });
   }
 });
 
-app.post('/api/suggestions/send', (req, res) => {
+// Принятие заявки в друзья
+app.post('/api/friends/accept', authenticateToken, async (req, res) => {
   try {
-    const user = getUserByToken(req);
-    if (!user) return res.status(401).json({ error: 'Не авторизован' });
+    const { requesterUsername } = req.body;
+    const user = await User.findOne({ username: req.user.username });
+    const requester = await User.findOne({ username: requesterUsername });
 
-    const { text } = req.body || {};
-    if (!text) return res.status(400).json({ error: 'Пустой текст' });
+    if (!user || !requester) return res.status(404).json({ error: 'Пользователь не найден' });
 
-    const msgObj = {
-      id: Date.now(),
-      sender: user.username,
-      text,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      avatar: user.avatar,
-      isAdmin: user.isAdmin,
-      chatType: 'suggestions',
-      targetId: 'suggestions',
-      room: 'suggestions'
-    };
-
-    if (!roomMessages['suggestions']) roomMessages['suggestions'] = [];
-    roomMessages['suggestions'].push(msgObj);
-
-    SYSTEM_ADMINS.forEach(admin => {
-      io.to(`user_${admin}`).emit('new_message', msgObj);
-    });
-
-    res.json({ message: 'Идея отправлена разработчикам!' });
-  } catch (err) {
-    res.status(500).json({ error: 'Ошибка отправки предложения' });
-  }
-});
-
-app.post('/api/friends/request', (req, res) => {
-  try {
-    const user = getUserByToken(req);
-    if (!user) return res.status(401).json({ error: 'Не авторизован' });
-
-    const { targetUsername } = req.body || {};
-    const target = users[targetUsername];
-
-    if (!target) return res.status(404).json({ error: 'Пользователь не найден' });
-    if (targetUsername === user.username) return res.status(400).json({ error: 'Нельзя добавить самого себя' });
-
-    if (!Array.isArray(user.friends)) user.friends = [];
-    if (!Array.isArray(target.friendRequests)) target.friendRequests = [];
-
-    if (user.friends.includes(targetUsername)) return res.status(400).json({ error: 'Уже в друзьях' });
-    if (target.friendRequests.includes(user.username)) return res.status(400).json({ error: 'Заявка уже отправлена' });
-
-    target.friendRequests.push(user.username);
-    res.json({ message: 'Заявка отправлена' });
-  } catch (err) {
-    res.status(500).json({ error: 'Ошибка добавления в друзья' });
-  }
-});
-
-app.post('/api/friends/accept', (req, res) => {
-  try {
-    const user = getUserByToken(req);
-    if (!user) return res.status(401).json({ error: 'Не авторизован' });
-
-    const { requesterUsername } = req.body || {};
-    if (!Array.isArray(user.friendRequests)) user.friendRequests = [];
-    if (!Array.isArray(user.friends)) user.friends = [];
-
-    user.friendRequests = user.friendRequests.filter(r => r !== requesterUsername);
-
+    user.friendRequests = user.friendRequests.filter(name => name !== requesterUsername);
     if (!user.friends.includes(requesterUsername)) user.friends.push(requesterUsername);
-    if (users[requesterUsername]) {
-      if (!Array.isArray(users[requesterUsername].friends)) users[requesterUsername].friends = [];
-      if (!users[requesterUsername].friends.includes(user.username)) {
-        users[requesterUsername].friends.push(user.username);
-      }
+    if (!requester.friends.includes(req.user.username)) requester.friends.push(req.user.username);
+
+    await user.save();
+    await requester.save();
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Ошибка при принятии заявки' });
+  }
+});
+
+// Создание группы
+app.post('/api/groups/create', authenticateToken, async (req, res) => {
+  try {
+    const { groupName, memberUsernames } = req.body;
+    const creator = req.user.username;
+    if (!groupName || !groupName.trim()) return res.status(400).json({ error: 'Укажите название группы' });
+
+    const creatorUser = await User.findOne({ username: creator });
+    const membersSet = new Set([creator]);
+    if (Array.isArray(memberUsernames)) {
+      memberUsernames.forEach(m => { if (creatorUser.friends.includes(m)) membersSet.add(m); });
     }
 
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: 'Ошибка принятия заявки' });
-  }
-});
-
-app.post('/api/friends/reject', (req, res) => {
-  try {
-    const user = getUserByToken(req);
-    if (!user) return res.status(401).json({ error: 'Не авторизован' });
-
-    const { requesterUsername } = req.body || {};
-    if (!Array.isArray(user.friendRequests)) user.friendRequests = [];
-
-    user.friendRequests = user.friendRequests.filter(r => r !== requesterUsername);
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: 'Ошибка отклонения заявки' });
-  }
-});
-
-app.post('/api/groups/create', (req, res) => {
-  try {
-    const user = getUserByToken(req);
-    if (!user) return res.status(401).json({ error: 'Не авторизован' });
-
-    const { groupName, memberUsernames } = req.body || {};
-    if (!groupName) return res.status(400).json({ error: 'Укажите название группы' });
-
     const groupId = 'group_' + Date.now();
-    const members = Array.from(new Set([user.username, ...(memberUsernames || [])]));
-
-    groups[groupId] = {
-      id: groupId,
-      name: groupName,
-      founder: user.username,
-      members
-    };
-
-    res.json({ success: true, groupId });
+    const group = await Group.create({ id: groupId, name: groupName.trim(), createdBy: creator, members: Array.from(membersSet) });
+    res.json({ success: true, group });
   } catch (err) {
     res.status(500).json({ error: 'Ошибка создания группы' });
   }
 });
 
-// Автоматический поиск index.html в корне или в папке public
-app.get('*', (req, res) => {
-  if (!req.path.startsWith('/api')) {
-    const rootIndex = path.join(__dirname, 'index.html');
-    const publicIndex = path.join(__dirname, 'public', 'index.html');
+// Определение комнат для чатов
+function getRoomId(chatType, targetId, username) {
+  if (chatType === 'saved') return 'saved_' + username;
+  if (chatType === 'suggestions' && isAdmin(username)) return 'suggestions_room';
+  if (chatType === 'dm') return [username, targetId].sort().join('_');
+  if (chatType === 'group') return targetId;
+  return null;
+}
 
-    if (fs.existsSync(rootIndex)) {
-      return res.sendFile(rootIndex);
-    } else if (fs.existsSync(publicIndex)) {
-      return res.sendFile(publicIndex);
-    } else {
-      return res.status(404).send('Ошибка: файл index.html не найден ни в корневом каталоге, ни в папке public.');
-    }
-  }
-});
-
-// Глобальная обработка ошибок Express
-app.use((err, req, res, next) => {
-  console.error('Ошибка сервера:', err);
-  res.status(500).json({ error: 'Произошла внутренняя ошибка сервера' });
-});
-
-// Socket.IO Обработка событий в реальном времени
+// Socket.io работа с чатом
 io.on('connection', (socket) => {
-  let socketUsername = null;
-
-  socket.on('join_room', (data) => {
+  socket.on('join_room', async ({ token, chatType, targetId }) => {
     try {
-      const { token, chatType, targetId } = data || {};
-      const username = tokens[token];
-      if (!username || !users[username]) return;
+      const decoded = jwt.verify(token, SECRET_KEY);
+      const room = getRoomId(chatType, targetId, decoded.username);
+      if (room) {
+        if (socket.currentRoom) socket.leave(socket.currentRoom);
+        socket.join(room);
+        socket.currentRoom = room;
 
-      socketUsername = username;
-      socket.join(`user_${username}`);
-
-      let roomKey = '';
-      if (chatType === 'saved') {
-        roomKey = `saved_${username}`;
-      } else if (chatType === 'suggestions') {
-        roomKey = 'suggestions';
-      } else if (chatType === 'dm') {
-        roomKey = getDMRoomId(username, targetId);
-      } else if (chatType === 'group') {
-        roomKey = targetId;
-      }
-
-      if (roomKey) {
-        socket.join(roomKey);
-        const history = roomMessages[roomKey] || [];
+        const history = await Message.find({ room }).sort({ id: 1 });
         socket.emit('chat_history', history);
       }
-    } catch (err) {
-      console.error('Socket join_room error:', err);
+    } catch (e) {
+      console.error('Socket join_room error:', e);
     }
   });
 
-  socket.on('send_message', (data) => {
+  socket.on('send_message', async ({ token, chatType, targetId, text, image, replyTo }) => {
     try {
-      const { token, chatType, targetId, text, image, replyTo, editMsgId } = data || {};
-      const username = tokens[token];
-      if (!username || !users[username]) return;
-      const user = users[username];
+      const decoded = jwt.verify(token, SECRET_KEY);
+      const senderUser = await User.findOne({ username: decoded.username });
+      if (!senderUser) return;
 
-      let roomKey = '';
-      if (chatType === 'saved') roomKey = `saved_${username}`;
-      else if (chatType === 'suggestions') roomKey = 'suggestions';
-      else if (chatType === 'dm') roomKey = getDMRoomId(username, targetId);
-      else if (chatType === 'group') roomKey = targetId;
-
-      if (!roomKey) return;
-      if (!roomMessages[roomKey]) roomMessages[roomKey] = [];
-
-      // Редактирование сообщения
-      if (editMsgId) {
-        const msg = roomMessages[roomKey].find(m => m.id === editMsgId);
-        if (msg && msg.sender === username) {
-          msg.text = text || '';
-          msg.edited = true;
-          io.to(roomKey).emit('chat_history', roomMessages[roomKey]);
-        }
-        return;
-      }
-
-      // Создание нового сообщения
-      const msgObj = {
-        id: Date.now() + Math.floor(Math.random() * 1000),
-        sender: username,
-        chatType,
-        targetId,
-        room: roomKey,
-        text: text || '',
-        image: image || null,
-        replyTo: replyTo || null,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        avatar: user.avatar,
-        isAdmin: user.isAdmin,
-        edited: false
-      };
-
-      roomMessages[roomKey].push(msgObj);
-
-      // Рассылка активным участникам в чате
-      io.to(roomKey).emit('new_message', msgObj);
-
-      // Рассылка по персональным каналам для счетчиков непрочитанных
-      if (chatType === 'dm' && targetId) {
-        io.to(`user_${username}`).to(`user_${targetId}`).emit('new_message', msgObj);
-      } else if (chatType === 'group' && groups[targetId]) {
-        groups[targetId].members.forEach(member => {
-          io.to(`user_${member}`).emit('new_message', msgObj);
+      const room = getRoomId(chatType, targetId, decoded.username);
+      if (room) {
+        const msgData = await Message.create({
+          id: Date.now() + Math.random(),
+          room,
+          sender: decoded.username,
+          avatar: senderUser.avatar,
+          isAdmin: isAdmin(decoded.username),
+          text: text || '',
+          image: image || null,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          replyTo: replyTo || null,
+          reactions: {},
+          edited: false
         });
+
+        io.to(room).emit('new_message', msgData);
       }
-    } catch (err) {
-      console.error('Socket send_message error:', err);
+    } catch (e) {
+      console.error('Socket send_message error:', e);
     }
   });
 
-  socket.on('delete_messages', (data) => {
+  socket.on('delete_messages', async ({ token, chatType, targetId, messageIds }) => {
     try {
-      const { token, chatType, targetId, messageIds } = data || {};
-      const username = tokens[token];
-      if (!username) return;
-
-      let roomKey = '';
-      if (chatType === 'saved') roomKey = `saved_${username}`;
-      else if (chatType === 'suggestions') roomKey = 'suggestions';
-      else if (chatType === 'dm') roomKey = getDMRoomId(username, targetId);
-      else if (chatType === 'group') roomKey = targetId;
-
-      if (roomKey && roomMessages[roomKey] && Array.isArray(messageIds)) {
-        roomMessages[roomKey] = roomMessages[roomKey].filter(m => !messageIds.includes(m.id));
-        io.to(roomKey).emit('chat_history', roomMessages[roomKey]);
+      const decoded = jwt.verify(token, SECRET_KEY);
+      const room = getRoomId(chatType, targetId, decoded.username);
+      if (room && Array.isArray(messageIds)) {
+        await Message.deleteMany({ id: { $in: messageIds }, sender: decoded.username, room });
+        const updatedHistory = await Message.find({ room }).sort({ id: 1 });
+        io.to(room).emit('chat_history', updatedHistory);
       }
-    } catch (err) {
-      console.error('Socket delete_messages error:', err);
+    } catch (e) {
+      console.error('Socket delete_messages error:', e);
     }
   });
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Wallchat сервер запущен на порту ${PORT}`);
-});
+server.listen(PORT, () => console.log(`Wallchat запущен на порту ${PORT}`));

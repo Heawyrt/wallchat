@@ -3,28 +3,60 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const crypto = require('crypto');
+const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  maxHttpBufferSize: 1e7 // Разрешаем загрузку изображений до 10 МБ
+  maxHttpBufferSize: 1e7
 });
 
+const DB_FILE = path.join(__dirname, 'database.json');
+
+// Загрузка или инициализация базы данных
+function loadData() {
+  const defaultData = {
+    users: {
+      'heawyrt': { username: 'heawyrt', password: 'adminpassword', isAdmin: true, avatar: null, dob: null, friends: ['w1len'], friendRequests: [] },
+      'w1len': { username: 'w1len', password: 'adminpassword', isAdmin: true, avatar: null, dob: null, friends: ['heawyrt'], friendRequests: [] }
+    },
+    groups: {},
+    chatHistories: {}
+  };
+
+  if (!fs.existsSync(DB_FILE)) {
+    fs.writeFileSync(DB_FILE, JSON.stringify(defaultData, null, 2));
+    return defaultData;
+  }
+
+  try {
+    const raw = fs.readFileSync(DB_FILE, 'utf-8');
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error('Ошибка чтения database.json, создаем заново:', err);
+    return defaultData;
+  }
+}
+
+function saveData() {
+  try {
+    fs.writeFileSync(DB_FILE, JSON.stringify({ users, groups, chatHistories }, null, 2));
+  } catch (err) {
+    console.error('Ошибка сохранения данных:', err);
+  }
+}
+
+const db = loadData();
+const users = db.users;
+const groups = db.groups;
+const chatHistories = db.chatHistories;
+const sessions = {}; // Токены сессий хранятся в памяти во время работы
+const userSockets = {};
+
 app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Хранилище данных в памяти
-const users = {
-  'heawyrt': { username: 'heawyrt', password: 'adminpassword', isAdmin: true, avatar: null, dob: null, friends: ['w1len'], friendRequests: [] },
-  'w1len': { username: 'w1len', password: 'adminpassword', isAdmin: true, avatar: null, dob: null, friends: ['heawyrt'], friendRequests: [] }
-};
-
-const sessions = {}; // token -> username
-const chatHistories = {}; // roomID -> Array<Message>
-const groups = {}; // groupId -> { id, name, founder, members: [] }
-const userSockets = {}; // username -> socket.id
-
-// Помощники
 function generateToken() {
   return crypto.randomBytes(16).toString('hex');
 }
@@ -40,7 +72,7 @@ function getRoomKey(chatType, user, targetId) {
   return null;
 }
 
-// REST API Endpoints
+// REST API
 
 // Регистрация
 app.post('/api/register', (req, res) => {
@@ -50,17 +82,21 @@ app.post('/api/register', (req, res) => {
     return res.status(400).json({ error: 'Заполните все поля' });
   }
 
-  if (users[username]) {
-    return res.status(400).json({ error: 'Пользователь уже существует' });
+  const cleanUsername = username.trim();
+  const lowerKey = cleanUsername.toLowerCase();
+
+  // Проверка существующего пользователя без учета регистра
+  const existingUserKey = Object.keys(users).find(u => u.toLowerCase() === lowerKey);
+  if (existingUserKey) {
+    return res.status(400).json({ error: 'Пользователь с таким именем уже существует' });
   }
 
   if (password.length < 4 || password.length > 20) {
     return res.status(400).json({ error: 'Пароль должен быть от 4 до 20 символов' });
   }
 
-  // Создаем пользователя и автоматически добавляем в друзья heawyrt и w1len
-  users[username] = {
-    username,
+  users[cleanUsername] = {
+    username: cleanUsername,
     password,
     isAdmin: false,
     avatar: avatar || null,
@@ -69,27 +105,40 @@ app.post('/api/register', (req, res) => {
     friendRequests: []
   };
 
-  // Добавляем нового пользователя в списки друзей администраторов
-  if (!users['heawyrt'].friends.includes(username)) users['heawyrt'].friends.push(username);
-  if (!users['w1len'].friends.includes(username)) users['w1len'].friends.push(username);
+  if (users['heawyrt'] && !users['heawyrt'].friends.includes(cleanUsername)) {
+    users['heawyrt'].friends.push(cleanUsername);
+  }
+  if (users['w1len'] && !users['w1len'].friends.includes(cleanUsername)) {
+    users['w1len'].friends.push(cleanUsername);
+  }
+
+  saveData();
 
   const token = generateToken();
-  sessions[token] = username;
+  sessions[token] = cleanUsername;
 
-  res.json({ username, token, isAdmin: false, avatar: avatar || null });
+  res.json({ username: cleanUsername, token, isAdmin: false, avatar: avatar || null });
 });
 
 // Авторизация
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
-  const user = users[username];
+
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Введите имя пользователя и пароль' });
+  }
+
+  const cleanUsername = username.trim();
+  // Поиск пользователя без учета регистра имени
+  const userKey = Object.keys(users).find(u => u.toLowerCase() === cleanUsername.toLowerCase());
+  const user = users[userKey];
 
   if (!user || user.password !== password) {
     return res.status(400).json({ error: 'Неверное имя пользователя или пароль' });
   }
 
   const token = generateToken();
-  sessions[token] = username;
+  sessions[token] = user.username;
 
   res.json({
     username: user.username,
@@ -99,19 +148,18 @@ app.post('/api/login', (req, res) => {
   });
 });
 
-// Получение данных текущего пользователя
+// Данные пользователя
 app.get('/api/me', (req, res) => {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(' ')[1];
   const username = sessions[token];
 
   if (!username || !users[username]) {
-    return res.status(401).json({ error: 'Необходима авторизация' });
+    return res.status(401).json({ error: 'Необходима повторная авторизация' });
   }
 
   const u = users[username];
-  
-  // Формируем детальный список друзей
+
   const friendsDetailed = u.friends.map(fName => {
     const fObj = users[fName];
     return {
@@ -121,11 +169,10 @@ app.get('/api/me', (req, res) => {
     };
   });
 
-  const friendReqsDetailed = u.friendRequests.map(rName => ({ username: rName }));
+  const friendReqsDetailed = (u.friendRequests || []).map(rName => ({ username: rName }));
 
-  // Формируем список групп пользователя
   const myGroups = Object.values(groups)
-    .filter(g => g.members.includes(username))
+    .filter(g => g.members && g.members.includes(username))
     .map(g => ({
       id: g.id,
       name: g.name,
@@ -142,7 +189,7 @@ app.get('/api/me', (req, res) => {
   });
 });
 
-// Обновление настроек
+// Обновление профиля
 app.post('/api/settings/update', (req, res) => {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(' ')[1];
@@ -159,10 +206,11 @@ app.post('/api/settings/update', (req, res) => {
   if (avatar !== undefined) u.avatar = avatar;
   if (password) u.password = password;
 
+  saveData();
   res.json({ message: 'Настройки обновлены' });
 });
 
-// Отправка предложения
+// Предложения администраторам
 app.post('/api/suggestions/send', (req, res) => {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(' ')[1];
@@ -188,27 +236,28 @@ app.post('/api/suggestions/send', (req, res) => {
   };
 
   chatHistories[roomKey].push(msg);
-  io.to(roomKey).emit('new_message', { ...msg, room: roomKey, chatType: 'suggestions', targetId: 'suggestions' });
+  saveData();
 
-  res.json({ message: 'Предложение успешно отправлено администраторам!' });
+  io.to(roomKey).emit('new_message', { ...msg, room: roomKey, chatType: 'suggestions', targetId: 'suggestions' });
+  res.json({ message: 'Предложение отправлено!' });
 });
 
-// Заявки в друзья
+// Друзья
 app.post('/api/friends/request', (req, res) => {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(' ')[1];
   const username = sessions[token];
-
   const { targetUsername } = req.body;
+
   if (!username || !users[username]) return res.status(401).json({ error: 'Неавторизован' });
   if (!users[targetUsername]) return res.status(404).json({ error: 'Пользователь не найден' });
-  if (targetUsername === username) return res.status(400).json({ error: 'Нельзя добавить самого себя' });
 
   const target = users[targetUsername];
   if (target.friends.includes(username)) return res.status(400).json({ error: 'Уже в друзьях' });
   if (target.friendRequests.includes(username)) return res.status(400).json({ error: 'Заявка уже отправлена' });
 
   target.friendRequests.push(username);
+  saveData();
   res.json({ message: 'Заявка отправлена' });
 });
 
@@ -228,6 +277,7 @@ app.post('/api/friends/accept', (req, res) => {
     users[requesterUsername].friends.push(username);
   }
 
+  saveData();
   res.json({ message: 'Заявка принята' });
 });
 
@@ -240,10 +290,11 @@ app.post('/api/friends/reject', (req, res) => {
   if (!username || !users[username]) return res.status(401).json({ error: 'Неавторизован' });
 
   users[username].friendRequests = users[username].friendRequests.filter(r => r !== requesterUsername);
+  saveData();
   res.json({ message: 'Заявка отклонена' });
 });
 
-// Создание группы
+// Группы
 app.post('/api/groups/create', (req, res) => {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(' ')[1];
@@ -262,12 +313,12 @@ app.post('/api/groups/create', (req, res) => {
     members
   };
 
+  saveData();
   res.json({ message: 'Группа создана', groupId });
 });
 
-// WebSocket События
+// Socket.IO
 io.on('connection', (socket) => {
-
   socket.on('join_room', ({ token, chatType, targetId }) => {
     const username = sessions[token];
     if (!username) return;
@@ -277,10 +328,7 @@ io.on('connection', (socket) => {
     if (!roomKey) return;
 
     socket.join(roomKey);
-
-    if (!chatHistories[roomKey]) {
-      chatHistories[roomKey] = [];
-    }
+    if (!chatHistories[roomKey]) chatHistories[roomKey] = [];
 
     socket.emit('chat_history', chatHistories[roomKey]);
   });
@@ -294,18 +342,17 @@ io.on('connection', (socket) => {
 
     if (!chatHistories[roomKey]) chatHistories[roomKey] = [];
 
-    // Редактирование существующего сообщения
     if (editMsgId) {
       const msg = chatHistories[roomKey].find(m => m.id === editMsgId);
       if (msg && msg.sender === username) {
         msg.text = text;
         msg.edited = true;
+        saveData();
         io.to(roomKey).emit('chat_history', chatHistories[roomKey]);
       }
       return;
     }
 
-    // Создание нового сообщения
     const senderObj = users[username];
     const newMsg = {
       id: Date.now(),
@@ -323,8 +370,8 @@ io.on('connection', (socket) => {
     };
 
     chatHistories[roomKey].push(newMsg);
+    saveData();
 
-    // Если сообщение отправляется в личный чат, подключаем сокет получателя к комнате для доставки события
     if (chatType === 'dm') {
       const recipientSocketId = userSockets[targetId];
       if (recipientSocketId) {
@@ -344,6 +391,7 @@ io.on('connection', (socket) => {
     if (!roomKey || !chatHistories[roomKey]) return;
 
     chatHistories[roomKey] = chatHistories[roomKey].filter(m => !messageIds.includes(m.id));
+    saveData();
     io.to(roomKey).emit('chat_history', chatHistories[roomKey]);
   });
 
@@ -357,8 +405,7 @@ io.on('connection', (socket) => {
   });
 });
 
-// Запуск сервера
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`Сервер Wallchat запущен на порту ${PORT}`);
+  console.log(`Сервер запущен на порту ${PORT}`);
 });

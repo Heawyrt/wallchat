@@ -34,7 +34,8 @@
     .app-container { width: 100%; max-width: 1000px; height: 85vh; background: var(--panel-bg); border-radius: 12px; display: none; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.5); position: relative; }
     .app-container.active { display: flex; }
 
-    .sidebar { width: 320px; background: #121921; border-right: 1px solid var(--border-color); display: flex; flex-direction: column; }
+    /* По умолчанию список чатов растянут на весь экран контейнера */
+    .sidebar { width: 100%; background: #121921; border-right: 1px solid var(--border-color); display: flex; flex-direction: column; }
     .sidebar-header { background: var(--primary-gradient); padding: 14px; display: flex; justify-content: space-between; align-items: center; }
     .user-info { display: flex; align-items: center; gap: 8px; font-weight: bold; cursor: pointer; }
 
@@ -50,18 +51,19 @@
 
     /* Бейдж непрочитанных сообщений */
     .unread-badge {
-      background: var(--msg-out);
+      background: var(--primary-gradient);
       color: #ffffff;
       font-size: 0.75rem;
       font-weight: bold;
-      padding: 2px 7px;
+      padding: 3px 8px;
       border-radius: 12px;
       margin-left: auto;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
     }
 
     /* Кнопка "Назад" к списку чатов */
     .back-btn {
-      display: none;
+      display: inline-block;
       background: none;
       border: none;
       color: #b83bde;
@@ -77,7 +79,8 @@
 
     .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: #3558d0; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0; }
 
-    .chat-main { flex: 1; display: flex; flex-direction: column; background: var(--panel-bg); position: relative; }
+    /* Область чата по умолчанию скрыта, открывается при клике на диалог */
+    .chat-main { flex: 1; display: none; flex-direction: column; background: var(--panel-bg); position: relative; width: 100%; }
     .chat-header { padding: 14px 20px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; background: #121921; }
     .messages-area { flex: 1; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
 
@@ -131,18 +134,14 @@
     .img-preview-bar { display: none; padding: 8px 14px; background: #121921; border-top: 1px solid var(--border-color); justify-content: space-between; align-items: center; font-size: 0.85rem; }
     .img-preview-bar img { height: 40px; border-radius: 4px; }
 
-    .empty-chat-state { flex: 1; display: flex; justify-content: center; align-items: center; color: #8e949a; }
     .member-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-color); }
 
-    /* Переключение режима полноэкранного чата с поддержкой мобильных устройств */
+    /* Переключение режима активного чата во весь экран */
     body.chat-open .sidebar { display: none; }
     body.chat-open .chat-main { display: flex; width: 100%; }
-    body.chat-open .back-btn { display: inline-block; }
 
     @media (max-width: 768px) {
       .app-container { height: 100vh; max-width: 100%; border-radius: 0; }
-      .sidebar { width: 100%; }
-      .chat-main { display: none; width: 100%; }
     }
   </style>
 </head>
@@ -201,7 +200,7 @@
     <button class="secondary" onclick="toggleModal('settingsModal', false)">Закрыть</button>
     <button class="secondary" style="background:#d32f2f" onclick="logout()">Выйти</button>
 
-    <div style="text-align: center; color: #8e949a; font-size: 0.8rem; margin-top: 8px;">Версия 1.5.1</div>
+    <div style="text-align: center; color: #8e949a; font-size: 0.8rem; margin-top: 8px;">Версия 1.5.2</div>
   </div>
 
   <div id="forwardModal" class="modal">
@@ -292,7 +291,7 @@
         </div>
       </div>
 
-      <div id="chatHeader" class="chat-header" style="display:none;">
+      <div id="chatHeader" class="chat-header">
         <div style="display:flex; align-items:center; gap:10px;">
           <button class="back-btn" onclick="closeChatView()">←</button>
           <div id="activeChatAvatar" class="avatar">C</div>
@@ -304,11 +303,7 @@
         <button id="groupSettingsBtn" class="secondary" style="display:none; padding:6px 10px;" onclick="openGroupSettings()">⚙ Настройки</button>
       </div>
 
-      <div id="emptyState" class="empty-chat-state">
-        Выберите диалог из списка слева
-      </div>
-
-      <div id="messagesArea" class="messages-area" style="display:none;"></div>
+      <div id="messagesArea" class="messages-area"></div>
 
       <div id="actionPreviewBar" class="action-preview-bar">
         <div id="actionPreviewText"></div>
@@ -321,7 +316,7 @@
         <button class="secondary" onclick="cancelImage()" style="padding:2px 6px;">✕</button>
       </div>
 
-      <form id="chatForm" class="input-area" style="display:none;" onsubmit="handleSendMsg(event)">
+      <form id="chatForm" class="input-area" onsubmit="handleSendMsg(event)">
         <label class="photo-btn" title="Отправить фото">
           📷
           <input type="file" id="msgPhotoInput" accept="image/*" style="display:none;" onchange="handleMsgPhoto(this)">
@@ -348,7 +343,7 @@
     let replyToMsg = null;
     let editingMsgId = null;
 
-    // Хранение счетчиков пришедших непрочитанных сообщений по ID чата
+    // Объект для точного подсчета непрочитанных сообщений по ID чата
     const unreadCounts = {};
 
     const EMOJIS = ['👍', '❤️', '😂', '🔥', '😮', '😢'];
@@ -479,14 +474,15 @@
         chatsList.appendChild(suggItem);
       }
 
-      // 3. Личные чаты (Друзья, включая автоматических heawyrt и w1len)
+      // 3. Личные чаты (Друзья, включая heawyrt и w1len)
       myData.friends.forEach(f => {
         const item = document.createElement('div');
         item.className = `chat-item ${activeChat?.id === f.username ? 'active' : ''}`;
         item.onclick = () => openChat({ type: 'dm', id: f.username, name: f.username, avatar: f.avatar, isAdmin: f.isAdmin });
         
         const avatarHTML = f.avatar ? `<img class="avatar" src="${f.avatar}">` : `<div class="avatar">${f.username[0].toUpperCase()}</div>`;
-        const unreadBadge = unreadCounts[f.username] > 0 ? `<span class="unread-badge">${unreadCounts[f.username]}</span>` : '';
+        const count = unreadCounts[f.username] || 0;
+        const unreadBadge = count > 0 ? `<span class="unread-badge">${count}</span>` : '';
 
         item.innerHTML = `
           ${avatarHTML}
@@ -504,7 +500,8 @@
         item.className = `chat-item ${activeChat?.id === g.id ? 'active' : ''}`;
         item.onclick = () => openChat({ type: 'group', id: g.id, name: g.name, groupData: g });
 
-        const unreadBadge = unreadCounts[g.id] > 0 ? `<span class="unread-badge">${unreadCounts[g.id]}</span>` : '';
+        const count = unreadCounts[g.id] || 0;
+        const unreadBadge = count > 0 ? `<span class="unread-badge">${count}</span>` : '';
 
         item.innerHTML = `
           <div class="avatar" style="background:#b83bde;">👥</div>
@@ -627,17 +624,12 @@
       clearSelection();
       cancelActionPreview();
 
-      // Сбрасываем непрочитанные сообщения для открываемого чата
+      // Сбрасываем счетчик непрочитанных для этого чата
       unreadCounts[chat.id] = 0;
       renderSidebar();
 
-      // Открываем полноэкранный режим чата
+      // Переключаем интерфейс на экран чата во весь экран
       document.body.classList.add('chat-open');
-
-      document.getElementById('emptyState').style.display = 'none';
-      document.getElementById('chatHeader').style.display = 'flex';
-      document.getElementById('messagesArea').style.display = 'flex';
-      document.getElementById('chatForm').style.display = 'flex';
 
       document.getElementById('activeChatName').innerHTML = `${chat.name} ${chat.isAdmin ? adminCheckmarkSVG : ''}`;
       document.getElementById('activeChatSub').textContent = 
@@ -662,16 +654,12 @@
     }
 
     function closeChatView() {
+      // Возвращаемся к списку чатов
       document.body.classList.remove('chat-open');
       activeChat = null;
-      document.getElementById('emptyState').style.display = 'flex';
-      document.getElementById('chatHeader').style.display = 'none';
-      document.getElementById('messagesArea').style.display = 'none';
-      document.getElementById('chatForm').style.display = 'none';
       renderSidebar();
     }
 
-    // Выделение сообщений
     function toggleSelectMessage(msgId) {
       if (selectedMsgIds.has(msgId)) {
         selectedMsgIds.delete(msgId);
@@ -702,7 +690,6 @@
           editBtn.style.display = 'none';
         }
 
-        const selectedMsgs = currentHistory.filter(m => selectedMsgIds.has(m.id));
         document.querySelectorAll('.message-row').forEach(row => {
           const id = Number(row.dataset.id);
           row.classList.toggle('selected', selectedMsgIds.has(id));
@@ -841,17 +828,23 @@
     });
 
     socket.on('new_message', (msg) => {
-      const chatTargetKey = msg.room.includes('_') ? msg.sender : msg.room;
+      // Определяем ключ чата (для групп — ID группы, для личек — никнейм отправителя)
+      let chatKey;
+      if (msg.chatType === 'group' || (msg.room && msg.room.startsWith('group_'))) {
+        chatKey = msg.targetId || msg.room;
+      } else {
+        chatKey = msg.sender;
+      }
 
-      if (activeChat && (activeChat.id === chatTargetKey || activeChat.id === msg.sender)) {
+      // Если в данный момент открыт этот чат
+      if (activeChat && (activeChat.id === chatKey || activeChat.id === msg.sender)) {
         currentHistory.push(msg);
         renderMessage(msg);
         const area = document.getElementById('messagesArea');
         area.scrollTop = area.scrollHeight;
       } else if (msg.sender !== currentUser.username) {
-        // Увеличиваем счетчик непрочитанных сообщений
-        const key = msg.room.startsWith('group_') ? msg.room : msg.sender;
-        unreadCounts[key] = (unreadCounts[key] || 0) + 1;
+        // Увеличиваем счетчик непрочитанных сообщений для соответствующего чата
+        unreadCounts[chatKey] = (unreadCounts[chatKey] || 0) + 1;
         renderSidebar();
       }
     });

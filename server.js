@@ -36,6 +36,7 @@ const userSchema = new mongoose.Schema({
 const groupSchema = new mongoose.Schema({
   id: { type: String, unique: true, required: true },
   name: { type: String, required: true },
+  avatar: { type: String, default: null },
   createdBy: { type: String, required: true },
   type: { type: String, default: 'group' }, // 'group' или 'channel'
   members: [{ type: String }]
@@ -53,7 +54,8 @@ const messageSchema = new mongoose.Schema({
   replyTo: { type: Object, default: null },
   reactions: { type: Object, default: {} },
   comments: { type: Array, default: [] },
-  edited: { type: Boolean, default: false }
+  edited: { type: Boolean, default: false },
+  isPinned: { type: Boolean, default: false }
 });
 
 const User = mongoose.model('User', userSchema);
@@ -213,6 +215,7 @@ app.get('/api/me', authenticateToken, async (req, res) => {
       return {
         id: g.id,
         name: g.name,
+        avatar: g.avatar || null,
         type: g.type || 'group',
         createdBy: g.createdBy,
         isFounder: g.createdBy === req.user.username,
@@ -380,22 +383,24 @@ app.post('/api/groups/remove-member', authenticateToken, async (req, res) => {
   }
 });
 
-// Переименование группы / канала (доступно только Founder)
+// Переименование и смена аватарки группы / канала (доступно только Founder)
 app.post('/api/groups/rename', authenticateToken, async (req, res) => {
   try {
-    const { groupId, newName } = req.body;
+    const { groupId, newName, avatar } = req.body;
     const requester = req.user.username;
 
     const group = await Group.findOne({ id: groupId });
     if (!group) return res.status(404).json({ error: 'Группа/Канал не найден(а)' });
 
     if (group.createdBy !== requester) {
-      return res.status(403).json({ error: 'Изменять название может только создатель (Founder)' });
+      return res.status(403).json({ error: 'Изменять настройки может только создатель (Founder)' });
     }
 
-    group.name = newName.trim();
+    if (newName) group.name = newName.trim();
+    if (avatar !== undefined) group.avatar = avatar;
+
     await group.save();
-    res.json({ success: true });
+    res.json({ success: true, avatar: group.avatar });
   } catch (err) {
     res.status(500).json({ error: 'Ошибка при переименовании' });
   }
@@ -440,6 +445,7 @@ app.post('/api/groups/delete', authenticateToken, async (req, res) => {
 
 // Определение комнат для чатов
 function getRoomId(chatType, targetId, username) {
+  if (chatType === 'wallchat' || targetId === 'wallchat') return 'channel_wallchat';
   if (chatType === 'saved') return 'saved_' + username;
   if (chatType === 'suggestions' && isAdmin(username)) return 'suggestions_room';
   if (chatType === 'dm') return [username, targetId].sort().join('_');
@@ -475,6 +481,10 @@ io.on('connection', (socket) => {
       const room = getRoomId(chatType, targetId, decoded.username);
       if (!room) return;
 
+      if (chatType === 'wallchat' || targetId === 'wallchat') {
+        if (!isAdmin(decoded.username)) return;
+      }
+
       if (chatType === 'channel') {
         const channel = await Group.findOne({ id: targetId });
         if (channel && channel.createdBy !== decoded.username) {
@@ -506,12 +516,37 @@ io.on('connection', (socket) => {
         replyTo: replyTo || null,
         reactions: {},
         comments: [],
-        edited: false
+        edited: false,
+        isPinned: false
       });
 
       io.to(room).emit('new_message', msgData);
     } catch (e) {
       console.error('Socket send_message error:', e);
+    }
+  });
+
+  socket.on('pin_message', async ({ token, chatType, targetId, messageId }) => {
+    try {
+      const decoded = jwt.verify(token, SECRET_KEY);
+      const room = getRoomId(chatType, targetId, decoded.username);
+      if (!room) return;
+
+      await Message.updateMany({ room }, { isPinned: false });
+
+      let pinnedMsg = null;
+      if (messageId) {
+        const msg = await Message.findOne({ id: messageId, room });
+        if (msg) {
+          msg.isPinned = true;
+          await msg.save();
+          pinnedMsg = msg;
+        }
+      }
+
+      io.to(room).emit('message_pinned', { room, pinnedMsg });
+    } catch (e) {
+      console.error('Socket pin_message error:', e);
     }
   });
 

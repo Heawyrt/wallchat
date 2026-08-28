@@ -79,7 +79,7 @@ function authenticateToken(req, res, next) {
 
 // REST API Маршруты
 
-// Регистрация с авто-добавлением в друзья ТОЛЬКО между heawyrt и w1len
+// Регистрация
 app.post('/api/register', async (req, res) => {
   try {
     const { username, password, avatar, dob } = req.body;
@@ -95,7 +95,6 @@ app.post('/api/register', async (req, res) => {
     const lowerName = cleanName.toLowerCase();
     let defaultFriends = [];
 
-    // Авто-дружба только если регистрируется heawyrt или w1len и второй уже зарегистрирован
     if (ADMINS.map(a => a.toLowerCase()).includes(lowerName)) {
       const otherAdminName = ADMINS.find(admin => admin.toLowerCase() !== lowerName);
       const otherAdmin = await User.findOne({ username: new RegExp(`^${otherAdminName}$`, 'i') });
@@ -248,6 +247,119 @@ app.post('/api/groups/create', authenticateToken, async (req, res) => {
   }
 });
 
+// Добавление участника в группу (из друзей)
+app.post('/api/groups/add-member', authenticateToken, async (req, res) => {
+  try {
+    const { groupId, targetUsername } = req.body;
+    const requester = req.user.username;
+
+    const group = await Group.findOne({ id: groupId });
+    if (!group) return res.status(404).json({ error: 'Группа не найдена' });
+
+    if (!group.members.includes(requester)) {
+      return res.status(403).json({ error: 'Вы не состоите в этой группе' });
+    }
+
+    const requesterUser = await User.findOne({ username: requester });
+    if (!requesterUser.friends.includes(targetUsername)) {
+      return res.status(400).json({ error: 'Пользователь должен быть у вас в друзьях' });
+    }
+
+    if (group.members.includes(targetUsername)) {
+      return res.status(400).json({ error: 'Пользователь уже в группе' });
+    }
+
+    group.members.push(targetUsername);
+    await group.save();
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Ошибка при добавлении участника в группу' });
+  }
+});
+
+// Удаление участника из группы (доступно только Founder)
+app.post('/api/groups/remove-member', authenticateToken, async (req, res) => {
+  try {
+    const { groupId, targetUsername } = req.body;
+    const requester = req.user.username;
+
+    const group = await Group.findOne({ id: groupId });
+    if (!group) return res.status(404).json({ error: 'Группа не найдена' });
+
+    if (group.createdBy !== requester) {
+      return res.status(403).json({ error: 'Удалять участников может только создатель (Founder) группы' });
+    }
+
+    if (targetUsername === group.createdBy) {
+      return res.status(400).json({ error: 'Создатель не может быть удален таким образом' });
+    }
+
+    group.members = group.members.filter(m => m !== targetUsername);
+    await group.save();
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Ошибка при удалении участника из группы' });
+  }
+});
+
+// Переименование группы (доступно только Founder)
+app.post('/api/groups/rename', authenticateToken, async (req, res) => {
+  try {
+    const { groupId, newName } = req.body;
+    const requester = req.user.username;
+
+    const group = await Group.findOne({ id: groupId });
+    if (!group) return res.status(404).json({ error: 'Группа не найдена' });
+
+    if (group.createdBy !== requester) {
+      return res.status(403).json({ error: 'Изменять название может только создатель (Founder)' });
+    }
+
+    group.name = newName.trim();
+    await group.save();
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Ошибка при переименовании группы' });
+  }
+});
+
+// Выход из группы
+app.post('/api/groups/leave', authenticateToken, async (req, res) => {
+  try {
+    const { groupId } = req.body;
+    const requester = req.user.username;
+
+    const group = await Group.findOne({ id: groupId });
+    if (!group) return res.status(404).json({ error: 'Группа не найдена' });
+
+    group.members = group.members.filter(m => m !== requester);
+    await group.save();
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Ошибка при выходе из группы' });
+  }
+});
+
+// Удаление группы (доступно только Founder)
+app.post('/api/groups/delete', authenticateToken, async (req, res) => {
+  try {
+    const { groupId } = req.body;
+    const requester = req.user.username;
+
+    const group = await Group.findOne({ id: groupId });
+    if (!group) return res.status(404).json({ error: 'Группа не найдена' });
+
+    if (group.createdBy !== requester) {
+      return res.status(403).json({ error: 'Удалить группу может только ее создатель' });
+    }
+
+    await Group.deleteOne({ id: groupId });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Ошибка при удалении группы' });
+  }
+});
+
 // Определение комнат для чатов
 function getRoomId(chatType, targetId, username) {
   if (chatType === 'saved') return 'saved_' + username;
@@ -310,7 +422,6 @@ io.on('connection', (socket) => {
       const decoded = jwt.verify(token, SECRET_KEY);
       const room = getRoomId(chatType, targetId, decoded.username);
       if (room && Array.isArray(messageIds)) {
-        // Удаляем только те сообщения, отправителем которых является сам пользователь
         await Message.deleteMany({ id: { $in: messageIds }, sender: decoded.username, room });
         const updatedHistory = await Message.find({ room }).sort({ id: 1 });
         io.to(room).emit('chat_history', updatedHistory);

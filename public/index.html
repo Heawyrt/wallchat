@@ -34,7 +34,6 @@
     .app-container { width: 100%; max-width: 1000px; height: 85vh; background: var(--panel-bg); border-radius: 12px; display: none; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.5); position: relative; }
     .app-container.active { display: flex; }
 
-    /* По умолчанию список чатов растянут на весь экран контейнера */
     .sidebar { width: 100%; background: #121921; border-right: 1px solid var(--border-color); display: flex; flex-direction: column; }
     .sidebar-header { background: var(--primary-gradient); padding: 14px; display: flex; justify-content: space-between; align-items: center; }
     .user-info { display: flex; align-items: center; gap: 8px; font-weight: bold; cursor: pointer; }
@@ -49,7 +48,6 @@
     .chat-item .info { flex: 1; overflow: hidden; }
     .chat-item .name { font-weight: bold; display: flex; align-items: center; gap: 4px; }
 
-    /* Бейдж непрочитанных сообщений */
     .unread-badge {
       background: var(--primary-gradient);
       color: #ffffff;
@@ -61,7 +59,6 @@
       box-shadow: 0 2px 6px rgba(0,0,0,0.3);
     }
 
-    /* Кнопка "Назад" к списку чатов */
     .back-btn {
       display: inline-block;
       background: none;
@@ -79,7 +76,6 @@
 
     .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: #3558d0; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0; }
 
-    /* Область чата по умолчанию скрыта, открывается при клике на диалог */
     .chat-main { flex: 1; display: none; flex-direction: column; background: var(--panel-bg); position: relative; width: 100%; }
     .chat-header { padding: 14px 20px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; background: #121921; }
     .messages-area { flex: 1; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
@@ -136,7 +132,6 @@
 
     .member-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-color); }
 
-    /* Переключение режима активного чата во весь экран */
     body.chat-open .sidebar { display: none; }
     body.chat-open .chat-main { display: flex; width: 100%; }
 
@@ -343,7 +338,6 @@
     let replyToMsg = null;
     let editingMsgId = null;
 
-    // Объект для точного подсчета непрочитанных сообщений по ID чата
     const unreadCounts = {};
 
     const EMOJIS = ['👍', '❤️', '😂', '🔥', '😮', '😢'];
@@ -474,7 +468,7 @@
         chatsList.appendChild(suggItem);
       }
 
-      // 3. Личные чаты (Друзья, включая heawyrt и w1len)
+      // 3. Личные чаты (Друзья)
       myData.friends.forEach(f => {
         const item = document.createElement('div');
         item.className = `chat-item ${activeChat?.id === f.username ? 'active' : ''}`;
@@ -624,11 +618,9 @@
       clearSelection();
       cancelActionPreview();
 
-      // Сбрасываем счетчик непрочитанных для этого чата
       unreadCounts[chat.id] = 0;
       renderSidebar();
 
-      // Переключаем интерфейс на экран чата во весь экран
       document.body.classList.add('chat-open');
 
       document.getElementById('activeChatName').innerHTML = `${chat.name} ${chat.isAdmin ? adminCheckmarkSVG : ''}`;
@@ -654,7 +646,6 @@
     }
 
     function closeChatView() {
-      // Возвращаемся к списку чатов
       document.body.classList.remove('chat-open');
       activeChat = null;
       renderSidebar();
@@ -763,12 +754,23 @@
     }
 
     function deleteSelectedMessages() {
-      if (!confirm('Удалить выбранные сообщения?')) return;
+      // Разрешаем удаление только собственных сообщений
+      const mySelectedIds = Array.from(selectedMsgIds).filter(id => {
+        const msg = currentHistory.find(m => m.id === id);
+        return msg && msg.sender === currentUser.username;
+      });
+
+      if (mySelectedIds.length === 0) {
+        alert('Вы можете удалять только свои сообщения!');
+        return;
+      }
+
+      if (!confirm('Удалить выбранные свои сообщения?')) return;
       socket.emit('delete_messages', {
         token: currentUser.token,
         chatType: activeChat.type,
         targetId: activeChat.id,
-        messageIds: Array.from(selectedMsgIds)
+        messageIds: mySelectedIds
       });
       clearSelection();
     }
@@ -818,7 +820,6 @@
       cancelImage();
     }
 
-    // Сокет события
     socket.on('chat_history', (history) => {
       currentHistory = history;
       const area = document.getElementById('messagesArea');
@@ -828,7 +829,6 @@
     });
 
     socket.on('new_message', (msg) => {
-      // Определяем ключ чата (для групп — ID группы, для личек — никнейм отправителя)
       let chatKey;
       if (msg.chatType === 'group' || (msg.room && msg.room.startsWith('group_'))) {
         chatKey = msg.targetId || msg.room;
@@ -836,14 +836,12 @@
         chatKey = msg.sender;
       }
 
-      // Если в данный момент открыт этот чат
       if (activeChat && (activeChat.id === chatKey || activeChat.id === msg.sender)) {
         currentHistory.push(msg);
         renderMessage(msg);
         const area = document.getElementById('messagesArea');
         area.scrollTop = area.scrollHeight;
       } else if (msg.sender !== currentUser.username) {
-        // Увеличиваем счетчик непрочитанных сообщений для соответствующего чата
         unreadCounts[chatKey] = (unreadCounts[chatKey] || 0) + 1;
         renderSidebar();
       }
@@ -920,7 +918,6 @@
       initApp();
     }
 
-    // Запуск приложения
     initApp();
   </script>
 </body>

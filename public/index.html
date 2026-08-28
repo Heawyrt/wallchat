@@ -48,6 +48,34 @@
     .chat-item .info { flex: 1; overflow: hidden; }
     .chat-item .name { font-weight: bold; display: flex; align-items: center; gap: 4px; }
 
+    .pin-btn-chat {
+      background: none;
+      border: none;
+      color: #8e949a;
+      cursor: pointer;
+      font-size: 0.9rem;
+      padding: 4px;
+    }
+    .pin-btn-chat.pinned { color: #b83bde; }
+
+    .pinned-msg-bar {
+      display: none;
+      background: #121921;
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border-color);
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .pinned-msg-bar .text {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 80%;
+      color: #b83bde;
+    }
+
     .unread-badge {
       background: var(--primary-gradient);
       color: #ffffff;
@@ -84,7 +112,7 @@
     .message-row.sent { flex-direction: row-reverse; }
     .message-row.selected .message-bubble { outline: 2px solid #b83bde; }
     
-    .message-bubble { max-width: 70%; padding: 10px 14px; border-radius: 12px; word-break: break-word; background: var(--msg-in); position: relative; }
+    .message-bubble { max-width: 70%; padding: 10px 14px; border-radius: 12px; word-break: break-word; background: var(--msg-in); position: relative; cursor: pointer; }
     .message-row.sent .message-bubble { background: var(--msg-out); }
     .message-sender { font-size: 0.75rem; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 4px; color: #a2b4c7; }
     .message-img { max-width: 100%; max-height: 250px; border-radius: 8px; margin-top: 6px; display: block; }
@@ -93,12 +121,12 @@
     .reply-quote { background: rgba(0,0,0,0.25); border-left: 3px solid #b83bde; padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; margin-bottom: 6px; color: #d1d5db; }
 
     .reactions-bar { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+    .reactions-bar.hidden-reactions { display: none; }
     .reaction-btn { background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: 12px; padding: 2px 6px; font-size: 0.75rem; cursor: pointer; color: #fff; }
     .reaction-btn.active { border-color: #b83bde; background: rgba(184,59,222,0.3); }
 
     .msg-actions { display: none; gap: 4px; position: absolute; top: -14px; right: 10px; background: #17212b; border: 1px solid var(--border-color); border-radius: 8px; padding: 2px 6px; z-index: 5; }
     .message-row:hover .msg-actions { display: flex; }
-    .msg-action-btn { background: none; border: none; cursor: pointer; padding: 2px; font-size: 0.85rem; }
 
     .msg-corner-reply {
       display: none;
@@ -203,7 +231,7 @@
     <button onclick="saveSettings()">Сохранить и выйти</button>
     <button class="secondary" style="background:#d32f2f" onclick="logout()">Выйти</button>
 
-    <div style="text-align: center; color: #8e949a; font-size: 0.8rem; margin-top: 8px;">Версия 1.7.0</div>
+    <div style="text-align: center; color: #8e949a; font-size: 0.8rem; margin-top: 8px;">Версия 1.8.0</div>
   </div>
 
   <div id="forwardModal" class="modal">
@@ -215,6 +243,15 @@
 
   <div id="groupSettingsModal" class="modal">
     <h2 id="groupSettingsTitle">Управление группой</h2>
+    
+    <div id="groupAvatarSection" style="text-align:center;">
+      <label for="setGroupAvatarInput" style="cursor:pointer;">
+        <img id="setGroupAvatarPreview" class="avatar" style="width:70px; height:70px; margin:auto;" src="" alt="Group Avatar">
+        <div style="font-size:0.8rem; color:#b83bde; margin-top:4px;">Сменить аватар группы/канала</div>
+      </label>
+      <input type="file" id="setGroupAvatarInput" accept="image/*" style="display:none" onchange="loadGroupAvatarPreview(this)">
+    </div>
+
     <div id="founderRenameSection">
       <label id="groupNameLabel" style="font-size:0.8rem; color:#8e949a;">Название группы:</label>
       <div style="display:flex; gap:6px; margin-top:4px;">
@@ -296,6 +333,7 @@
       <div id="selectionBar" class="selection-top-bar">
         <span>Выбрано: <b id="selectedCount">0</b></span>
         <div style="display:flex; gap:6px;">
+          <button id="pinSelectedBtn" onclick="pinSelectedMessage()" class="secondary" style="padding:4px 10px;">📌 Закрепить</button>
           <button id="editSelectedBtn" onclick="editSelectedMessage()" class="secondary" style="padding:4px 10px; display:none;">✏ Редактировать</button>
           <button onclick="copySelectedMessages()" class="secondary" style="padding:4px 10px;">📋 Копировать</button>
           <button onclick="openForwardModal()" class="secondary" style="padding:4px 10px;">↪ Переслать</button>
@@ -314,6 +352,11 @@
           </div>
         </div>
         <button id="groupSettingsBtn" class="secondary" style="display:none; padding:6px 10px;" onclick="openGroupSettings()">⚙ Настройки</button>
+      </div>
+
+      <div id="pinnedMsgBar" class="pinned-msg-bar" onclick="scrollToPinnedMessage()">
+        <div>📌 <span id="pinnedMsgText" class="text">Закрепленное сообщение</span></div>
+        <button class="secondary" style="padding:2px 6px;" onclick="unpinCurrentMessage(event)">✕</button>
       </div>
 
       <div id="messagesArea" class="messages-area"></div>
@@ -349,11 +392,15 @@
     let authMode = 'login';
     let currentUser = JSON.parse(localStorage.getItem('wallchat_user') || 'null');
     let tempAvatarBase64 = '';
+    let tempGroupAvatarBase64 = '';
     let selectedImageBase64 = null;
 
     let activeChat = null;
     let myData = { friends: [], friendRequests: [], groups: [], dob: null };
     let currentHistory = [];
+    let currentPinnedMsg = null;
+
+    let pinnedChatIds = new Set(JSON.parse(localStorage.getItem('wallchat_pinned_chats') || '[]'));
 
     let selectedMsgIds = new Set();
     let replyToMsg = null;
@@ -411,6 +458,18 @@
       }
     }
 
+    function loadGroupAvatarPreview(input) {
+      const file = input.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          document.getElementById('setGroupAvatarPreview').src = e.target.result;
+          tempGroupAvatarBase64 = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      }
+    }
+
     async function submitAuth() {
       const username = document.getElementById('authName').value.trim();
       const password = document.getElementById('authPass').value.trim();
@@ -459,6 +518,59 @@
       }
     }
 
+    function togglePinChat(chatId, e) {
+      if (e) e.stopPropagation();
+      if (pinnedChatIds.has(chatId)) {
+        pinnedChatIds.delete(chatId);
+      } else {
+        pinnedChatIds.add(chatId);
+      }
+      localStorage.setItem('wallchat_pinned_chats', JSON.stringify(Array.from(pinnedChatIds)));
+      renderSidebar();
+    }
+
+    function createChatItemElement(chat) {
+      const item = document.createElement('div');
+      item.className = `chat-item ${activeChat?.id === chat.id ? 'active' : ''}`;
+      item.onclick = () => openChat(chat);
+
+      const isPinned = pinnedChatIds.has(chat.id);
+      const pinBtnHTML = `<button class="pin-btn-chat ${isPinned ? 'pinned' : ''}" onclick="togglePinChat('${chat.id}', event)" title="${isPinned ? 'Открепить' : 'Закрепить'}">📌</button>`;
+
+      const count = unreadCounts[chat.id] || 0;
+      const unreadBadge = count > 0 ? `<span class="unread-badge">${count}</span>` : '';
+
+      let avatarHTML = '';
+      if (chat.type === 'wallchat') {
+        avatarHTML = `<div class="avatar" style="background:var(--primary-gradient);">📢</div>`;
+      } else if (chat.type === 'saved') {
+        avatarHTML = `<div class="avatar" style="background:var(--primary-gradient);">⭐</div>`;
+      } else if (chat.type === 'suggestions') {
+        avatarHTML = `<div class="avatar" style="background:linear-gradient(135deg, #ff9800, #b83bde);">💡</div>`;
+      } else if (chat.avatar) {
+        avatarHTML = `<img class="avatar" src="${chat.avatar}">`;
+      } else {
+        const icon = chat.type === 'channel' ? '📢' : (chat.type === 'group' ? '👥' : chat.name[0].toUpperCase());
+        avatarHTML = `<div class="avatar">${icon}</div>`;
+      }
+
+      let subtext = '';
+      if (chat.type === 'channel' && chat.groupData) {
+        subtext = `${chat.groupData.members.length} подписчиков`;
+      }
+
+      item.innerHTML = `
+        ${avatarHTML}
+        <div class="info">
+          <div class="name">${chat.name} ${chat.isAdmin ? adminCheckmarkSVG : ''} ${chat.isFounder ? '<span class="founder-badge">Founder</span>' : ''}</div>
+          ${subtext ? `<div style="font-size:0.75rem; color:#8e949a;">${subtext}</div>` : ''}
+        </div>
+        ${unreadBadge}
+        ${pinBtnHTML}
+      `;
+      return item;
+    }
+
     function renderSidebar() {
       document.getElementById('myName').textContent = currentUser.username;
       document.getElementById('myAdminBadge').innerHTML = currentUser.isAdmin ? adminCheckmarkSVG : '';
@@ -478,72 +590,69 @@
       const chatsList = document.getElementById('chatsList');
       chatsList.innerHTML = '';
 
-      // 1. Избранное
-      const savedItem = document.createElement('div');
-      savedItem.className = `chat-item ${activeChat?.type === 'saved' ? 'active' : ''}`;
-      savedItem.onclick = () => openChat({ type: 'saved', id: 'saved', name: 'Избранное', avatar: null });
-      savedItem.innerHTML = `
-        <div class="avatar" style="background:var(--primary-gradient);">⭐</div>
-        <div class="info">
-          <div class="name">Избранное</div>
-        </div>
-      `;
-      chatsList.appendChild(savedItem);
+      const allChats = [];
 
-      // 2. Предложка
+      // 0. Канал wallchat (для всех)
+      allChats.push({
+        type: 'wallchat',
+        id: 'wallchat',
+        name: 'wallchat',
+        avatar: null,
+        isAdmin: true
+      });
+
+      // 1. Избранное
+      allChats.push({
+        type: 'saved',
+        id: 'saved',
+        name: 'Избранное',
+        avatar: null
+      });
+
+      // 2. Предложка (для админов)
       if (currentUser.isAdmin) {
-        const suggItem = document.createElement('div');
-        suggItem.className = `chat-item ${activeChat?.type === 'suggestions' ? 'active' : ''}`;
-        suggItem.onclick = () => openChat({ type: 'suggestions', id: 'suggestions', name: 'Предложка', avatar: null });
-        suggItem.innerHTML = `
-          <div class="avatar" style="background:linear-gradient(135deg, #ff9800, #b83bde);">💡</div>
-          <div class="info">
-            <div class="name">Предложка</div>
-          </div>
-        `;
-        chatsList.appendChild(suggItem);
+        allChats.push({
+          type: 'suggestions',
+          id: 'suggestions',
+          name: 'Предложка',
+          avatar: null
+        });
       }
 
       // 3. Личные чаты (Друзья)
       myData.friends.forEach(f => {
-        const item = document.createElement('div');
-        item.className = `chat-item ${activeChat?.id === f.username ? 'active' : ''}`;
-        item.onclick = () => openChat({ type: 'dm', id: f.username, name: f.username, avatar: f.avatar, isAdmin: f.isAdmin });
-        
-        const avatarHTML = f.avatar ? `<img class="avatar" src="${f.avatar}">` : `<div class="avatar">${f.username[0].toUpperCase()}</div>`;
-        const count = unreadCounts[f.username] || 0;
-        const unreadBadge = count > 0 ? `<span class="unread-badge">${count}</span>` : '';
-
-        item.innerHTML = `
-          ${avatarHTML}
-          <div class="info">
-            <div class="name">${f.username} ${f.isAdmin ? adminCheckmarkSVG : ''}</div>
-          </div>
-          ${unreadBadge}
-        `;
-        chatsList.appendChild(item);
+        allChats.push({
+          type: 'dm',
+          id: f.username,
+          name: f.username,
+          avatar: f.avatar,
+          isAdmin: f.isAdmin
+        });
       });
 
       // 4. Группы и Каналы
       myData.groups.forEach(g => {
-        const item = document.createElement('div');
-        item.className = `chat-item ${activeChat?.id === g.id ? 'active' : ''}`;
-        item.onclick = () => openChat({ type: g.type || 'group', id: g.id, name: g.name, groupData: g });
+        allChats.push({
+          type: g.type || 'group',
+          id: g.id,
+          name: g.name,
+          avatar: g.avatar,
+          isFounder: g.isFounder,
+          groupData: g
+        });
+      });
 
-        const count = unreadCounts[g.id] || 0;
-        const unreadBadge = count > 0 ? `<span class="unread-badge">${count}</span>` : '';
-        const icon = g.type === 'channel' ? '📢' : '👥';
-        const subtext = g.type === 'channel' ? `${g.members.length} подписчиков` : '';
+      // Сортировка: Закрепленные чаты выходят наверх
+      allChats.sort((a, b) => {
+        const aPinned = pinnedChatIds.has(a.id);
+        const bPinned = pinnedChatIds.has(b.id);
+        if (aPinned && !bPinned) return -1;
+        if (!aPinned && bPinned) return 1;
+        return 0;
+      });
 
-        item.innerHTML = `
-          <div class="avatar" style="background:#b83bde;">${icon}</div>
-          <div class="info">
-            <div class="name">${g.name} ${g.isFounder ? '<span class="founder-badge">Founder</span>' : ''}</div>
-            ${subtext ? `<div style="font-size:0.75rem; color:#8e949a;">${subtext}</div>` : ''}
-          </div>
-          ${unreadBadge}
-        `;
-        chatsList.appendChild(item);
+      allChats.forEach(chat => {
+        chatsList.appendChild(createChatItemElement(chat));
       });
 
       // Заявки и друзья
@@ -699,7 +808,14 @@
       document.getElementById('leaveGroupBtn').textContent = isChannel ? 'Покинуть канал' : 'Покинуть группу';
       document.getElementById('deleteGroupBtn').textContent = isChannel ? 'Удалить канал' : 'Удалить группу';
 
+      if (group.avatar) {
+        document.getElementById('setGroupAvatarPreview').src = group.avatar;
+      } else {
+        document.getElementById('setGroupAvatarPreview').src = '';
+      }
+
       document.getElementById('editGroupNameInput').value = group.name;
+      document.getElementById('groupAvatarSection').style.display = isFounder ? 'block' : 'none';
       document.getElementById('founderRenameSection').style.display = isFounder ? 'block' : 'none';
       document.getElementById('deleteGroupBtn').style.display = isFounder ? 'block' : 'none';
 
@@ -780,16 +896,21 @@
       const newName = document.getElementById('editGroupNameInput').value.trim();
       if (!newName) return alert('Введите новое название');
 
+      const body = { groupId: activeChat.id, newName };
+      if (tempGroupAvatarBase64) body.avatar = tempGroupAvatarBase64;
+
       const res = await fetch('/api/groups/rename', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
-        body: JSON.stringify({ groupId: activeChat.id, newName })
+        body: JSON.stringify(body)
       });
 
       const data = await res.json();
       if (res.ok) {
         activeChat.name = newName;
+        if (data.avatar) activeChat.avatar = data.avatar;
         document.getElementById('activeChatName').innerHTML = `${newName}`;
+        tempGroupAvatarBase64 = '';
         await openGroupSettings();
         renderSidebar();
       } else {
@@ -852,6 +973,8 @@
       if (chat.type === 'channel') {
         const subsCount = chat.groupData ? chat.groupData.members.length : 0;
         document.getElementById('activeChatSub').textContent = `${subsCount} подписчиков`;
+      } else if (chat.type === 'wallchat') {
+        document.getElementById('activeChatSub').textContent = 'Официальный канал';
       } else {
         document.getElementById('activeChatSub').textContent = 
           chat.type === 'saved' ? 'Ваши заметки' :
@@ -860,20 +983,25 @@
 
       document.getElementById('groupSettingsBtn').style.display = (chat.type === 'group' || chat.type === 'channel') ? 'block' : 'none';
 
-      // Чат-инпут ограничения для канала
+      // Ограничения ввода сообщений
       const isChannel = chat.type === 'channel';
+      const isWallchat = chat.type === 'wallchat';
       const isCreator = chat.groupData && chat.groupData.createdBy === currentUser.username;
+      const isAdminUser = currentUser.isAdmin;
 
-      if (isChannel && !isCreator) {
+      if ((isChannel && !isCreator) || (isWallchat && !isAdminUser)) {
         document.getElementById('chatForm').style.display = 'none';
         document.getElementById('channelNotice').style.display = 'block';
+        document.getElementById('channelNotice').textContent = isWallchat ? 'Публиковать сообщения могут только администраторы.' : 'Только создатель канала может публиковать посты.';
       } else {
         document.getElementById('chatForm').style.display = 'flex';
         document.getElementById('channelNotice').style.display = 'none';
       }
 
       const avatarHeader = document.getElementById('activeChatAvatar');
-      if (chat.type === 'saved') {
+      if (chat.type === 'wallchat') {
+        avatarHeader.outerHTML = `<div id="activeChatAvatar" class="avatar" style="background:var(--primary-gradient)">📢</div>`;
+      } else if (chat.type === 'saved') {
         avatarHeader.outerHTML = `<div id="activeChatAvatar" class="avatar" style="background:var(--primary-gradient)">⭐</div>`;
       } else if (chat.type === 'suggestions') {
         avatarHeader.outerHTML = `<div id="activeChatAvatar" class="avatar" style="background:linear-gradient(135deg, #ff9800, #b83bde)">💡</div>`;
@@ -884,6 +1012,9 @@
       }
 
       document.getElementById('messagesArea').innerHTML = '';
+      document.getElementById('pinnedMsgBar').style.display = 'none';
+      currentPinnedMsg = null;
+
       socket.emit('join_room', { token: currentUser.token, chatType: chat.type, targetId: chat.id });
     }
 
@@ -944,6 +1075,38 @@
     function clearSelection() {
       selectedMsgIds.clear();
       updateSelectionUI();
+    }
+
+    function pinSelectedMessage() {
+      if (selectedMsgIds.size !== 1) return alert('Выберите одно сообщение для закрепления');
+      const msgId = Array.from(selectedMsgIds)[0];
+      socket.emit('pin_message', {
+        token: currentUser.token,
+        chatType: activeChat.type,
+        targetId: activeChat.id,
+        messageId: msgId
+      });
+      clearSelection();
+    }
+
+    function unpinCurrentMessage(e) {
+      if (e) e.stopPropagation();
+      socket.emit('pin_message', {
+        token: currentUser.token,
+        chatType: activeChat.type,
+        targetId: activeChat.id,
+        messageId: null
+      });
+    }
+
+    function scrollToPinnedMessage() {
+      if (!currentPinnedMsg) return;
+      const row = document.querySelector(`.message-row[data-id="${currentPinnedMsg.id}"]`);
+      if (row) {
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        row.classList.add('selected');
+        setTimeout(() => row.classList.remove('selected'), 1500);
+      }
     }
 
     function editSelectedMessage() {
@@ -1100,18 +1263,39 @@
       }
     }
 
+    function updatePinnedMsgUI(pinnedMsg) {
+      currentPinnedMsg = pinnedMsg;
+      const bar = document.getElementById('pinnedMsgBar');
+      const textSpan = document.getElementById('pinnedMsgText');
+      if (pinnedMsg) {
+        bar.style.display = 'flex';
+        textSpan.textContent = `${pinnedMsg.sender}: ${pinnedMsg.text || 'Фотография'}`;
+      } else {
+        bar.style.display = 'none';
+      }
+    }
+
+    socket.on('message_pinned', ({ pinnedMsg }) => {
+      updatePinnedMsgUI(pinnedMsg);
+    });
+
     socket.on('chat_history', (history) => {
       currentHistory = history;
       const area = document.getElementById('messagesArea');
       area.innerHTML = '';
       history.forEach(renderMessage);
       area.scrollTop = area.scrollHeight;
+
+      const pinned = history.find(m => m.isPinned);
+      updatePinnedMsgUI(pinned || null);
     });
 
     socket.on('new_message', (msg) => {
       let chatKey;
       if (msg.chatType === 'group' || msg.chatType === 'channel' || (msg.room && (msg.room.startsWith('group_') || msg.room.startsWith('channel_')))) {
         chatKey = msg.targetId || msg.room;
+      } else if (msg.room === 'channel_wallchat') {
+        chatKey = 'wallchat';
       } else {
         chatKey = msg.sender;
       }
@@ -1172,11 +1356,6 @@
       const row = document.createElement('div');
       row.className = `message-row ${isMy ? 'sent' : ''}`;
       row.dataset.id = msg.id;
-      row.onclick = (e) => {
-        if (e.target.tagName !== 'BUTTON' && e.target.tagName !== 'INPUT' && !e.target.classList.contains('reaction-btn')) {
-          toggleSelectMessage(msg.id);
-        }
-      };
 
       const avatarHTML = msg.avatar ? `<img class="avatar" style="width:28px; height:28px;" src="${msg.avatar}">` : `<div class="avatar" style="width:28px; height:28px;">${msg.sender[0].toUpperCase()}</div>`;
 
@@ -1195,7 +1374,7 @@
       }).join('');
 
       let commentsHTML = '';
-      if (activeChat && activeChat.type === 'channel') {
+      if (activeChat && (activeChat.type === 'channel' || activeChat.type === 'wallchat')) {
         const comments = msg.comments || [];
         commentsHTML = `
           <div style="margin-top:8px;">
@@ -1220,19 +1399,33 @@
         `;
       }
 
+      // Быстрые реакции скрыты по умолчанию в ЛС и Группах, пока не кликнут по сообщению
+      const isHiddenReactions = (activeChat && (activeChat.type === 'dm' || activeChat.type === 'group'));
+
       row.innerHTML = `
         ${avatarHTML}
-        <div class="message-bubble">
+        <div class="message-bubble" id="msg-bubble-${msg.id}">
           <button class="msg-corner-reply" onclick="setReplyMsg(${msg.id})">↩</button>
           <div class="message-sender">${msg.sender} ${msg.isAdmin ? adminCheckmarkSVG : ''}</div>
           ${replyHTML}
           <div>${msg.text}</div>
           ${imgHTML}
-          <div class="reactions-bar">${reactionsHTML}</div>
+          <div class="reactions-bar ${isHiddenReactions ? 'hidden-reactions' : ''}" id="reactions-bar-${msg.id}">${reactionsHTML}</div>
           ${commentsHTML}
           <div class="message-time">${msg.time} ${msg.edited ? '(изм.)' : ''}</div>
         </div>
       `;
+
+      const bubble = row.querySelector('.message-bubble');
+      bubble.onclick = (e) => {
+        if (e.target.tagName !== 'BUTTON' && e.target.tagName !== 'INPUT' && !e.target.classList.contains('reaction-btn')) {
+          if (isHiddenReactions) {
+            const bar = document.getElementById(`reactions-bar-${msg.id}`);
+            if (bar) bar.classList.toggle('hidden-reactions');
+          }
+          toggleSelectMessage(msg.id);
+        }
+      };
 
       area.appendChild(row);
     }
@@ -1275,6 +1468,12 @@
     function logout() {
       localStorage.removeItem('wallchat_user');
       currentUser = null;
+      toggleModal('settingsModal', false);
+      toggleModal('groupSettingsModal', false);
+      toggleModal('forwardModal', false);
+      toggleModal('createGroupModal', false);
+      toggleModal('createChannelModal', false);
+      document.body.classList.remove('chat-open');
       initApp();
     }
 

@@ -79,7 +79,7 @@ function authenticateToken(req, res, next) {
 
 // REST API Маршруты
 
-// Регистрация
+// Регистрация с авто-добавлением heawyrt и w1len в друзья
 app.post('/api/register', async (req, res) => {
   try {
     const { username, password, avatar, dob } = req.body;
@@ -92,15 +92,24 @@ app.post('/api/register', async (req, res) => {
     const existingUser = await User.findOne({ username: cleanName });
     if (existingUser) return res.status(400).json({ error: 'Пользователь уже существует' });
 
+    // Авто-дружба с админами heawyrt и w1len
+    const defaultFriends = ADMINS.filter(admin => admin.toLowerCase() !== cleanName.toLowerCase());
+
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = await User.create({
       username: cleanName,
       password: hashedPassword,
       avatar: avatar || null,
       dob: dob || null,
-      friends: [],
+      friends: defaultFriends,
       friendRequests: []
     });
+
+    // Добавляем зарегистрированного пользователя в друзья к самим админам
+    await User.updateMany(
+      { username: { $in: ADMINS }, username: { $ne: cleanName } },
+      { $addToSet: { friends: cleanName } }
+    );
 
     const token = jwt.sign({ username: cleanName }, SECRET_KEY);
     res.json({ token, username: cleanName, avatar: user.avatar, dob: user.dob, isAdmin: isAdmin(cleanName) });

@@ -2,410 +2,332 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
-const crypto = require('crypto');
-const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  maxHttpBufferSize: 1e7
+  maxHttpBufferSize: 1e7 // Разрешаем передачу Base64 фото до 10MB
 });
 
-const DB_FILE = path.join(__dirname, 'database.json');
-
-// Загрузка или инициализация базы данных
-function loadData() {
-  const defaultData = {
-    users: {
-      'heawyrt': { username: 'heawyrt', password: 'adminpassword', isAdmin: true, avatar: null, dob: null, friends: ['w1len'], friendRequests: [] },
-      'w1len': { username: 'w1len', password: 'adminpassword', isAdmin: true, avatar: null, dob: null, friends: ['heawyrt'], friendRequests: [] }
-    },
-    groups: {},
-    chatHistories: {}
-  };
-
-  if (!fs.existsSync(DB_FILE)) {
-    fs.writeFileSync(DB_FILE, JSON.stringify(defaultData, null, 2));
-    return defaultData;
-  }
-
-  try {
-    const raw = fs.readFileSync(DB_FILE, 'utf-8');
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error('Ошибка чтения database.json, создаем заново:', err);
-    return defaultData;
-  }
-}
-
-function saveData() {
-  try {
-    fs.writeFileSync(DB_FILE, JSON.stringify({ users, groups, chatHistories }, null, 2));
-  } catch (err) {
-    console.error('Ошибка сохранения данных:', err);
-  }
-}
-
-const db = loadData();
-const users = db.users;
-const groups = db.groups;
-const chatHistories = db.chatHistories;
-const sessions = {}; // Токены сессий хранятся в памяти во время работы
-const userSockets = {};
-
 app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(__dirname));
 
-function generateToken() {
-  return crypto.randomBytes(16).toString('hex');
+// База данных в памяти
+const users = {
+  heawyrt: { username: 'heawyrt', password: '123', isAdmin: true, avatar: null, dob: null, friends: ['w1len'], friendRequests: [] },
+  w1len: { username: 'w1len', password: '123', isAdmin: true, avatar: null, dob: null, friends: ['heawyrt'], friendRequests: [] }
+};
+
+const SYSTEM_ADMINS = ['heawyrt', 'w1len'];
+const groups = {}; // id -> { id, name, founder, members: [] }
+const roomMessages = {}; // roomKey -> [ msgObj ]
+const tokens = {}; // token -> username
+
+// Вспомогательные функции
+function ensureAutoFriends(userObj) {
+  SYSTEM_ADMINS.forEach(adminName => {
+    if (userObj.username !== adminName) {
+      if (!userObj.friends.includes(adminName)) {
+        userObj.friends.push(adminName);
+      }
+      if (users[adminName] && !users[adminName].friends.includes(userObj.username)) {
+        users[adminName].friends.push(userObj.username);
+      }
+    }
+  });
 }
 
-function getRoomKey(chatType, user, targetId) {
-  if (chatType === 'saved') return `saved_${user}`;
-  if (chatType === 'suggestions') return `suggestions`;
-  if (chatType === 'group') return `group_${targetId}`;
-  if (chatType === 'dm') {
-    const pair = [user, targetId].sort();
-    return `dm_${pair[0]}_${pair[1]}`;
-  }
-  return null;
+function getDMRoomId(user1, user2) {
+  return [user1, user2].sort().join('_');
 }
 
-// REST API
+function getUserByToken(req) {
+  const auth = req.headers.authorization;
+  if (!auth) return null;
+  const token = auth.replace('Bearer ', '');
+  const username = tokens[token];
+  return users[username] || null;
+}
 
-// Регистрация
+// REST API Маршруты
 app.post('/api/register', (req, res) => {
   const { username, password, avatar, dob } = req.body;
-  
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Заполните все поля' });
-  }
+  if (!username || !password) return res.status(400).json({ error: 'Заполните все поля' });
+  if (users[username]) return res.status(400).json({ error: 'Пользователь уже существует' });
 
-  const cleanUsername = username.trim();
-  const lowerKey = cleanUsername.toLowerCase();
-
-  // Проверка существующего пользователя без учета регистра
-  const existingUserKey = Object.keys(users).find(u => u.toLowerCase() === lowerKey);
-  if (existingUserKey) {
-    return res.status(400).json({ error: 'Пользователь с таким именем уже существует' });
-  }
-
-  if (password.length < 4 || password.length > 20) {
-    return res.status(400).json({ error: 'Пароль должен быть от 4 до 20 символов' });
-  }
-
-  users[cleanUsername] = {
-    username: cleanUsername,
+  const newUser = {
+    username,
     password,
-    isAdmin: false,
     avatar: avatar || null,
     dob: dob || null,
-    friends: ['heawyrt', 'w1len'],
+    isAdmin: SYSTEM_ADMINS.includes(username),
+    friends: [],
     friendRequests: []
   };
 
-  if (users['heawyrt'] && !users['heawyrt'].friends.includes(cleanUsername)) {
-    users['heawyrt'].friends.push(cleanUsername);
-  }
-  if (users['w1len'] && !users['w1len'].friends.includes(cleanUsername)) {
-    users['w1len'].friends.push(cleanUsername);
-  }
+  ensureAutoFriends(newUser);
+  users[username] = newUser;
 
-  saveData();
+  const token = 'token_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+  tokens[token] = username;
 
-  const token = generateToken();
-  sessions[token] = cleanUsername;
-
-  res.json({ username: cleanUsername, token, isAdmin: false, avatar: avatar || null });
+  res.json({ username: newUser.username, token, isAdmin: newUser.isAdmin, avatar: newUser.avatar });
 });
 
-// Авторизация
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
-
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Введите имя пользователя и пароль' });
-  }
-
-  const cleanUsername = username.trim();
-  // Поиск пользователя без учета регистра имени
-  const userKey = Object.keys(users).find(u => u.toLowerCase() === cleanUsername.toLowerCase());
-  const user = users[userKey];
-
+  const user = users[username];
   if (!user || user.password !== password) {
-    return res.status(400).json({ error: 'Неверное имя пользователя или пароль' });
+    return res.status(400).json({ error: 'Неверный логин или пароль' });
   }
 
-  const token = generateToken();
-  sessions[token] = user.username;
+  ensureAutoFriends(user);
+
+  const token = 'token_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+  tokens[token] = username;
+
+  res.json({ username: user.username, token, isAdmin: user.isAdmin, avatar: user.avatar });
+});
+
+app.get('/api/me', (req, res) => {
+  const user = getUserByToken(req);
+  if (!user) return res.status(401).json({ error: 'Не авторизован' });
+
+  ensureAutoFriends(user);
+
+  const friendsData = user.friends.map(f => ({
+    username: f,
+    avatar: users[f]?.avatar || null,
+    isAdmin: users[f]?.isAdmin || false
+  }));
+
+  const requestsData = user.friendRequests.map(r => ({
+    username: r,
+    avatar: users[r]?.avatar || null
+  }));
+
+  const userGroups = Object.values(groups).filter(g => g.members.includes(user.username)).map(g => ({
+    id: g.id,
+    name: g.name,
+    isFounder: g.founder === user.username
+  }));
 
   res.json({
     username: user.username,
-    token,
+    avatar: user.avatar,
+    dob: user.dob,
     isAdmin: user.isAdmin,
-    avatar: user.avatar
+    friends: friendsData,
+    friendRequests: requestsData,
+    groups: userGroups
   });
 });
 
-// Данные пользователя
-app.get('/api/me', (req, res) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(' ')[1];
-  const username = sessions[token];
-
-  if (!username || !users[username]) {
-    return res.status(401).json({ error: 'Необходима повторная авторизация' });
-  }
-
-  const u = users[username];
-
-  const friendsDetailed = u.friends.map(fName => {
-    const fObj = users[fName];
-    return {
-      username: fName,
-      avatar: fObj ? fObj.avatar : null,
-      isAdmin: fObj ? fObj.isAdmin : false
-    };
-  });
-
-  const friendReqsDetailed = (u.friendRequests || []).map(rName => ({ username: rName }));
-
-  const myGroups = Object.values(groups)
-    .filter(g => g.members && g.members.includes(username))
-    .map(g => ({
-      id: g.id,
-      name: g.name,
-      isFounder: g.founder === username,
-      members: g.members
-    }));
-
-  res.json({
-    username: u.username,
-    dob: u.dob,
-    friends: friendsDetailed,
-    friendRequests: friendReqsDetailed,
-    groups: myGroups
-  });
-});
-
-// Обновление профиля
 app.post('/api/settings/update', (req, res) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(' ')[1];
-  const username = sessions[token];
-
-  if (!username || !users[username]) {
-    return res.status(401).json({ error: 'Неавторизован' });
-  }
+  const user = getUserByToken(req);
+  if (!user) return res.status(401).json({ error: 'Не авторизован' });
 
   const { dob, avatar, password } = req.body;
-  const u = users[username];
+  if (dob !== undefined) user.dob = dob;
+  if (avatar !== undefined) user.avatar = avatar;
+  if (password) user.password = password;
 
-  if (dob !== undefined) u.dob = dob;
-  if (avatar !== undefined) u.avatar = avatar;
-  if (password) u.password = password;
-
-  saveData();
-  res.json({ message: 'Настройки обновлены' });
+  res.json({ success: true });
 });
 
-// Предложения администраторам
 app.post('/api/suggestions/send', (req, res) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(' ')[1];
-  const username = sessions[token];
-
-  if (!username || !users[username]) {
-    return res.status(401).json({ error: 'Неавторизован' });
-  }
+  const user = getUserByToken(req);
+  if (!user) return res.status(401).json({ error: 'Не авторизован' });
 
   const { text } = req.body;
   if (!text) return res.status(400).json({ error: 'Пустой текст' });
 
-  const roomKey = 'suggestions';
-  if (!chatHistories[roomKey]) chatHistories[roomKey] = [];
-
-  const msg = {
+  const msgObj = {
     id: Date.now(),
-    sender: username,
+    sender: user.username,
     text,
     time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    avatar: users[username].avatar,
-    isAdmin: users[username].isAdmin
+    avatar: user.avatar,
+    isAdmin: user.isAdmin,
+    chatType: 'suggestions',
+    targetId: 'suggestions',
+    room: 'suggestions'
   };
 
-  chatHistories[roomKey].push(msg);
-  saveData();
+  if (!roomMessages['suggestions']) roomMessages['suggestions'] = [];
+  roomMessages['suggestions'].push(msgObj);
 
-  io.to(roomKey).emit('new_message', { ...msg, room: roomKey, chatType: 'suggestions', targetId: 'suggestions' });
-  res.json({ message: 'Предложение отправлено!' });
+  // Уведомляем администраторов
+  SYSTEM_ADMINS.forEach(admin => {
+    io.to(`user_${admin}`).emit('new_message', msgObj);
+  });
+
+  res.json({ message: 'Идея отправлена разработчикам!' });
 });
 
-// Друзья
 app.post('/api/friends/request', (req, res) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(' ')[1];
-  const username = sessions[token];
+  const user = getUserByToken(req);
+  if (!user) return res.status(401).json({ error: 'Не авторизован' });
+
   const { targetUsername } = req.body;
-
-  if (!username || !users[username]) return res.status(401).json({ error: 'Неавторизован' });
-  if (!users[targetUsername]) return res.status(404).json({ error: 'Пользователь не найден' });
-
   const target = users[targetUsername];
-  if (target.friends.includes(username)) return res.status(400).json({ error: 'Уже в друзьях' });
-  if (target.friendRequests.includes(username)) return res.status(400).json({ error: 'Заявка уже отправлена' });
+  if (!target) return res.status(404).json({ error: 'Пользователь не найден' });
+  if (targetUsername === user.username) return res.status(400).json({ error: 'Нельзя добавить самого себя' });
+  if (user.friends.includes(targetUsername)) return res.status(400).json({ error: 'Уже в друзьях' });
+  if (target.friendRequests.includes(user.username)) return res.status(400).json({ error: 'Заявка уже отправлена' });
 
-  target.friendRequests.push(username);
-  saveData();
+  target.friendRequests.push(user.username);
   res.json({ message: 'Заявка отправлена' });
 });
 
 app.post('/api/friends/accept', (req, res) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(' ')[1];
-  const username = sessions[token];
+  const user = getUserByToken(req);
+  if (!user) return res.status(401).json({ error: 'Не авторизован' });
+
   const { requesterUsername } = req.body;
+  user.friendRequests = user.friendRequests.filter(r => r !== requesterUsername);
 
-  if (!username || !users[username]) return res.status(401).json({ error: 'Неавторизован' });
-
-  const u = users[username];
-  u.friendRequests = u.friendRequests.filter(r => r !== requesterUsername);
-
-  if (!u.friends.includes(requesterUsername)) u.friends.push(requesterUsername);
-  if (users[requesterUsername] && !users[requesterUsername].friends.includes(username)) {
-    users[requesterUsername].friends.push(username);
+  if (!user.friends.includes(requesterUsername)) user.friends.push(requesterUsername);
+  if (users[requesterUsername] && !users[requesterUsername].friends.includes(user.username)) {
+    users[requesterUsername].friends.push(user.username);
   }
 
-  saveData();
-  res.json({ message: 'Заявка принята' });
+  res.json({ success: true });
 });
 
 app.post('/api/friends/reject', (req, res) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(' ')[1];
-  const username = sessions[token];
+  const user = getUserByToken(req);
+  if (!user) return res.status(401).json({ error: 'Не авторизован' });
+
   const { requesterUsername } = req.body;
-
-  if (!username || !users[username]) return res.status(401).json({ error: 'Неавторизован' });
-
-  users[username].friendRequests = users[username].friendRequests.filter(r => r !== requesterUsername);
-  saveData();
-  res.json({ message: 'Заявка отклонена' });
+  user.friendRequests = user.friendRequests.filter(r => r !== requesterUsername);
+  res.json({ success: true });
 });
 
-// Группы
 app.post('/api/groups/create', (req, res) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(' ')[1];
-  const username = sessions[token];
+  const user = getUserByToken(req);
+  if (!user) return res.status(401).json({ error: 'Не авторизован' });
+
   const { groupName, memberUsernames } = req.body;
+  if (!groupName) return res.status(400).json({ error: 'Укажите название группы' });
 
-  if (!username || !users[username]) return res.status(401).json({ error: 'Неавторизован' });
-
-  const groupId = 'g_' + Date.now();
-  const members = Array.from(new Set([username, ...(memberUsernames || [])]));
+  const groupId = 'group_' + Date.now();
+  const members = Array.from(new Set([user.username, ...(memberUsernames || [])]));
 
   groups[groupId] = {
     id: groupId,
     name: groupName,
-    founder: username,
+    founder: user.username,
     members
   };
 
-  saveData();
-  res.json({ message: 'Группа создана', groupId });
+  res.json({ success: true, groupId });
 });
 
-// Socket.IO
+// Socket.IO Обработка событий в реальном времени
 io.on('connection', (socket) => {
+  let socketUsername = null;
+
+  // Авторизация сокета и вход в личную комнату уведомлений
   socket.on('join_room', ({ token, chatType, targetId }) => {
-    const username = sessions[token];
-    if (!username) return;
+    const username = tokens[token];
+    if (!username || !users[username]) return;
 
-    userSockets[username] = socket.id;
-    const roomKey = getRoomKey(chatType, username, targetId);
-    if (!roomKey) return;
+    socketUsername = username;
+    socket.join(`user_${username}`); // Персональный канал для доставки счетчиков непрочитанных
 
-    socket.join(roomKey);
-    if (!chatHistories[roomKey]) chatHistories[roomKey] = [];
+    let roomKey = '';
+    if (chatType === 'saved') {
+      roomKey = `saved_${username}`;
+    } else if (chatType === 'suggestions') {
+      roomKey = 'suggestions';
+    } else if (chatType === 'dm') {
+      roomKey = getDMRoomId(username, targetId);
+    } else if (chatType === 'group') {
+      roomKey = targetId;
+    }
 
-    socket.emit('chat_history', chatHistories[roomKey]);
+    if (roomKey) {
+      socket.join(roomKey);
+      const history = roomMessages[roomKey] || [];
+      socket.emit('chat_history', history);
+    }
   });
 
   socket.on('send_message', ({ token, chatType, targetId, text, image, replyTo, editMsgId }) => {
-    const username = sessions[token];
+    const username = tokens[token];
     if (!username || !users[username]) return;
+    const user = users[username];
 
-    const roomKey = getRoomKey(chatType, username, targetId);
+    let roomKey = '';
+    if (chatType === 'saved') roomKey = `saved_${username}`;
+    else if (chatType === 'suggestions') roomKey = 'suggestions';
+    else if (chatType === 'dm') roomKey = getDMRoomId(username, targetId);
+    else if (chatType === 'group') roomKey = targetId;
+
     if (!roomKey) return;
+    if (!roomMessages[roomKey]) roomMessages[roomKey] = [];
 
-    if (!chatHistories[roomKey]) chatHistories[roomKey] = [];
-
+    // Редактирование сообщения
     if (editMsgId) {
-      const msg = chatHistories[roomKey].find(m => m.id === editMsgId);
+      const msg = roomMessages[roomKey].find(m => m.id === editMsgId);
       if (msg && msg.sender === username) {
         msg.text = text;
         msg.edited = true;
-        saveData();
-        io.to(roomKey).emit('chat_history', chatHistories[roomKey]);
+        io.to(roomKey).emit('chat_history', roomMessages[roomKey]);
       }
       return;
     }
 
-    const senderObj = users[username];
-    const newMsg = {
-      id: Date.now(),
+    // Создание нового сообщения
+    const msgObj = {
+      id: Date.now() + Math.floor(Math.random() * 1000),
       sender: username,
+      chatType,
+      targetId,
+      room: roomKey,
       text: text || '',
       image: image || null,
       replyTo: replyTo || null,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      edited: false,
-      avatar: senderObj.avatar,
-      isAdmin: senderObj.isAdmin,
-      room: roomKey,
-      chatType,
-      targetId
+      avatar: user.avatar,
+      isAdmin: user.isAdmin,
+      edited: false
     };
 
-    chatHistories[roomKey].push(newMsg);
-    saveData();
+    roomMessages[roomKey].push(msgObj);
 
+    // Рассылка активным участникам в чате
+    io.to(roomKey).emit('new_message', msgObj);
+
+    // Рассылка по персональным каналам адресатов (для обновления счётчиков непрочитанных)
     if (chatType === 'dm') {
-      const recipientSocketId = userSockets[targetId];
-      if (recipientSocketId) {
-        const recipientSocket = io.sockets.sockets.get(recipientSocketId);
-        if (recipientSocket) recipientSocket.join(roomKey);
-      }
+      io.to(`user_${username}`).to(`user_${targetId}`).emit('new_message', msgObj);
+    } else if (chatType === 'group' && groups[targetId]) {
+      groups[targetId].members.forEach(member => {
+        io.to(`user_${member}`).emit('new_message', msgObj);
+      });
     }
-
-    io.to(roomKey).emit('new_message', newMsg);
   });
 
   socket.on('delete_messages', ({ token, chatType, targetId, messageIds }) => {
-    const username = sessions[token];
+    const username = tokens[token];
     if (!username) return;
 
-    const roomKey = getRoomKey(chatType, username, targetId);
-    if (!roomKey || !chatHistories[roomKey]) return;
+    let roomKey = '';
+    if (chatType === 'saved') roomKey = `saved_${username}`;
+    else if (chatType === 'suggestions') roomKey = 'suggestions';
+    else if (chatType === 'dm') roomKey = getDMRoomId(username, targetId);
+    else if (chatType === 'group') roomKey = targetId;
 
-    chatHistories[roomKey] = chatHistories[roomKey].filter(m => !messageIds.includes(m.id));
-    saveData();
-    io.to(roomKey).emit('chat_history', chatHistories[roomKey]);
-  });
-
-  socket.on('disconnect', () => {
-    for (const [uname, sid] of Object.entries(userSockets)) {
-      if (sid === socket.id) {
-        delete userSockets[uname];
-        break;
-      }
+    if (roomMessages[roomKey]) {
+      roomMessages[roomKey] = roomMessages[roomKey].filter(m => !messageIds.includes(m.id));
+      io.to(roomKey).emit('chat_history', roomMessages[roomKey]);
     }
   });
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`Сервер запущен на порту ${PORT}`);
+  console.log(`Wallchat сервер запущен на порту ${PORT}`);
 });

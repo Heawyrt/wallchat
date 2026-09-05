@@ -1,1483 +1,424 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Wallchat</title>
-  <style>
-    :root {
-      --primary-gradient: linear-gradient(135deg, #b83bde, #3558d0);
-      --bg-color: #0e1621;
-      --panel-bg: #17212b;
-      --border-color: #242f3d;
-      --text-color: #ffffff;
-      --msg-out: #3558d0;
-      --msg-in: #182533;
-      --input-bg: #242f3d;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
-    body { background: var(--bg-color); color: var(--text-color); display: flex; flex-direction: column; height: 100vh; justify-content: center; align-items: center; }
+import asyncio
+import os
+import logging
+import time
+import json
+import html
+import re
+from aiohttp import web, ClientSession
+from telethon import TelegramClient, events
 
-    .wallchat-top-header {
-      font-size: 1.8rem;
-      font-weight: 800;
-      background: var(--primary-gradient);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      margin-bottom: 10px;
-      letter-spacing: 1px;
-    }
+# --- 1. НАСТРОЙКИ ПЕРЕМЕННЫХ ---
+API_ID = int(os.environ.get("API_ID", 1234567))
+API_HASH = os.environ.get("API_HASH", "YOUR_API_HASH")
 
-    .auth-screen, .modal { display: none; width: 100%; max-width: 460px; background: var(--panel-bg); padding: 24px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); position: absolute; z-index: 10; }
-    .auth-screen.active, .modal.active { display: flex; flex-direction: column; gap: 14px; }
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
+MY_CHAT_ID = os.environ.get("MY_CHAT_ID", "YOUR_CHAT_ID")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
-    .app-container { width: 100%; max-width: 1000px; height: 85vh; background: var(--panel-bg); border-radius: 12px; display: none; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.5); position: relative; }
-    .app-container.active { display: flex; }
+HISTORY_FILE = 'bot_history.json'
+DATASET_FILE = 'dataset.json'
 
-    .sidebar { width: 100%; background: #121921; border-right: 1px solid var(--border-color); display: flex; flex-direction: column; }
-    .sidebar-header { background: var(--primary-gradient); padding: 14px; display: flex; justify-content: space-between; align-items: center; }
-    .user-info { display: flex; align-items: center; gap: 8px; font-weight: bold; cursor: pointer; }
+TARGET_CHATS = [
+    'editors_video',
+    'jetlagchat',
+    'vakansii_reelsmaker',
+    'reelsmakervacancy',
+    'motionhunter',
+    'reelsmaker_tinder',
+    'videojobs',
+    'vacancysmm',
+    'dnative_job',
+    'rabotavakansij'
+]
 
-    .nav-tabs { display: flex; background: #0e1621; border-bottom: 1px solid var(--border-color); }
-    .nav-tab { flex: 1; padding: 10px; text-align: center; cursor: pointer; font-size: 0.85rem; font-weight: bold; color: #8e949a; border-bottom: 2px solid transparent; }
-    .nav-tab.active { color: #fff; border-bottom-color: #b83bde; }
+KEYWORDS = [
+    'reels', 'рилс', 'рилсы', 'рилсов', 'рилсмейкер',
+    'shorts', 'шортс', 'шортсы', 'шортсов',
+    'tiktok', 'тикток', 'тик ток', 'тик-ток',
+    'вертикальн', 'вертикалки', 'клипы', 'клип',
+    'монтаж', 'монтажер', 'монтажёр', 'видеомонтаж', 
+    'видеомонтажер', 'видеомонтажёр',
+    'клипмейкер', 'видеомейкер', 'моушн', 'моушен', 'motion',
+    'capcut', 'капкат', 'premiere', 'премьер', 'after effects', 
+    'афтер эффектис', 'ae', 'davinci', 'давинчи', 'final cut', 'файнал кат',
+    'субтитры', 'динамичный монтаж', 'хуки', 'hooks', 
+    'говорящая голова', 'short video', 'короткие видео', 
+    'склейка', 'цветокор', 'цветокоррекция', 'саунддизайн'
+]
 
-    .tab-content { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
-    .chat-item { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; cursor: pointer; transition: background 0.2s; position: relative; }
-    .chat-item:hover, .chat-item.active { background: #242f3d; }
-    .chat-item .info { flex: 1; overflow: hidden; }
-    .chat-item .name { font-weight: bold; display: flex; align-items: center; gap: 4px; }
-
-    .pin-btn-chat {
-      background: none;
-      border: none;
-      color: #8e949a;
-      cursor: pointer;
-      font-size: 0.9rem;
-      padding: 4px;
-    }
-    .pin-btn-chat.pinned { color: #b83bde; }
-
-    .pinned-msg-bar {
-      display: none;
-      background: #121921;
-      padding: 8px 14px;
-      border-bottom: 1px solid var(--border-color);
-      justify-content: space-between;
-      align-items: center;
-      font-size: 0.85rem;
-      cursor: pointer;
-    }
-    .pinned-msg-bar .text {
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 80%;
-      color: #b83bde;
-    }
-
-    .unread-badge {
-      background: var(--primary-gradient);
-      color: #ffffff;
-      font-size: 0.75rem;
-      font-weight: bold;
-      padding: 3px 8px;
-      border-radius: 12px;
-      margin-left: auto;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-    }
-
-    .back-btn {
-      display: inline-block;
-      background: none;
-      border: none;
-      color: #b83bde;
-      font-size: 1.5rem;
-      font-weight: bold;
-      cursor: pointer;
-      margin-right: 8px;
-    }
-
-    .admin-badge { display: inline-flex; align-items: center; color: #b83bde; }
-    .admin-badge svg { width: 16px; height: 16px; }
-    .founder-badge { background: linear-gradient(135deg, #b83bde, #3558d0); color: #fff; font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; font-weight: bold; }
-
-    .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: #3558d0; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0; }
-
-    .chat-main { flex: 1; display: none; flex-direction: column; background: var(--panel-bg); position: relative; width: 100%; }
-    .chat-header { padding: 14px 20px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; background: #121921; }
-    .messages-area { flex: 1; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
-
-    .message-row { display: flex; gap: 8px; align-items: flex-end; position: relative; }
-    .message-row.sent { flex-direction: row-reverse; }
-    .message-row.selected .message-bubble { outline: 2px solid #b83bde; }
+EXCLUDE_KEYWORDS = [
+    'помогу', 'резюме', 'editor', 'портфолио', 'portfolio', 'resume', 
+    'ищу работу', 'ищу проект', 'ищу заказы', 'возьму проект', 'готово к работе',
+    'обо мне', 'о себе', 'мои кейсы', 'мой кейс', 'скиллы', 'обо мне:',
+    'smm', 'смм', 'ugc', 'югс', 'копирайтер', 'копирайтинг',
+    'таргетолог', 'таргет', 'дизайнер карточек', 'инфографика',
+    'маркетолог', 'сторисмейкер', 'менеджер каналов', 'контент-менеджер',
+    'дизайн банеров', 'превьюмейкер',
     
-    .message-bubble { max-width: 70%; padding: 10px 14px; border-radius: 12px; word-break: break-word; background: var(--msg-in); position: relative; cursor: pointer; }
-    .message-row.sent .message-bubble { background: var(--msg-out); }
-    .message-sender { font-size: 0.75rem; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 4px; color: #a2b4c7; }
-    .message-img { max-width: 100%; max-height: 250px; border-radius: 8px; margin-top: 6px; display: block; }
-    .message-time { font-size: 0.65rem; opacity: 0.7; text-align: right; margin-top: 4px; display: flex; justify-content: flex-end; gap: 4px; }
-
-    .reply-quote { background: rgba(0,0,0,0.25); border-left: 3px solid #b83bde; padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; margin-bottom: 6px; color: #d1d5db; }
-
-    .reactions-bar { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
-    .reactions-bar.hidden-reactions { display: none; }
-    .reaction-btn { background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: 12px; padding: 2px 6px; font-size: 0.75rem; cursor: pointer; color: #fff; }
-    .reaction-btn.active { border-color: #b83bde; background: rgba(184,59,222,0.3); }
-
-    .msg-actions { display: none; gap: 4px; position: absolute; top: -14px; right: 10px; background: #17212b; border: 1px solid var(--border-color); border-radius: 8px; padding: 2px 6px; z-index: 5; }
-    .message-row:hover .msg-actions { display: flex; }
-
-    .msg-corner-reply {
-      display: none;
-      position: absolute;
-      top: 4px;
-      right: 4px;
-      background: none;
-      border: none;
-      cursor: pointer;
-      font-size: 0.85rem;
-      opacity: 0.5;
-      color: #fff;
-      padding: 0;
-    }
-    .message-bubble:hover .msg-corner-reply { display: block; }
-    .message-bubble:hover .msg-corner-reply:hover { opacity: 1; }
-
-    .selection-top-bar { display: none; background: #121921; padding: 10px 16px; border-bottom: 1px solid var(--border-color); justify-content: space-between; align-items: center; }
-
-    .input-area { display: flex; align-items: center; padding: 12px; background: #0e1621; gap: 8px; border-top: 1px solid var(--border-color); }
-    input, button, select, textarea { padding: 10px 14px; border: none; border-radius: 8px; outline: none; }
-    input, textarea { background: var(--input-bg); color: #fff; flex: 1; }
-    button { background: var(--primary-gradient); color: #fff; font-weight: bold; cursor: pointer; }
-    button.secondary { background: #242f3d; }
-    .photo-btn { cursor: pointer; padding: 8px 12px; background: #242f3d; border-radius: 8px; font-size: 1.2rem; }
-
-    .action-preview-bar { display: none; padding: 8px 14px; background: #121921; border-top: 1px solid var(--border-color); justify-content: space-between; align-items: center; font-size: 0.85rem; }
-
-    .img-preview-bar { display: none; padding: 8px 14px; background: #121921; border-top: 1px solid var(--border-color); justify-content: space-between; align-items: center; font-size: 0.85rem; }
-    .img-preview-bar img { height: 40px; border-radius: 4px; }
-
-    .member-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-color); }
-
-    .comments-section { margin-top: 8px; border-top: 1px solid var(--border-color); padding-top: 6px; font-size: 0.8rem; }
-    .comment-item { background: rgba(0,0,0,0.2); padding: 4px 8px; border-radius: 6px; margin-top: 4px; }
-
-    body.chat-open .sidebar { display: none; }
-    body.chat-open .chat-main { display: flex; width: 100%; }
-
-    @media (max-width: 768px) {
-      .app-container { height: 100vh; max-width: 100%; border-radius: 0; }
-    }
-  </style>
-</head>
-<body>
-
-  <div class="wallchat-top-header">WALLCHAT</div>
-
-  <div id="authScreen" class="auth-screen active">
-    <h2 style="text-align:center;">Добро пожаловать</h2>
-    <div style="display:flex; gap:8px;">
-      <button id="tabLogin" style="flex:1" onclick="switchAuthTab('login')">Вход</button>
-      <button id="tabReg" style="flex:1" class="secondary" onclick="switchAuthTab('reg')">Регистрация</button>
-    </div>
-    <div id="regAvatarBox" style="display:none; text-align:center;">
-      <label for="regAvatarInput" style="cursor:pointer;">
-        <img id="regAvatarPreview" class="avatar" style="width:70px; height:70px; margin:auto;" src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>" alt="+">
-        <div style="font-size:0.8rem; color:#b83bde; margin-top:4px;">Выбрать аватар</div>
-      </label>
-      <input type="file" id="regAvatarInput" accept="image/*" style="display:none" onchange="loadPreview(this, 'regAvatarPreview')">
-    </div>
-    <input type="text" id="authName" placeholder="Имя пользователя">
-    <div style="display:flex; align-items:center; gap:4px;">
-      <input type="password" id="authPass" placeholder="Пароль">
-      <button type="button" class="secondary" style="padding:10px;" onclick="togglePasswordVisibility('authPass', this)">👁</button>
-    </div>
-    <div id="regHint" style="font-size:0.75rem; color:#8e949a; display:none;">
-      * Длина пароля: 4-20 символов (1-9, A-Z, А-Я).
-    </div>
-    <div id="regDobBox" style="display:none;">
-      <label style="font-size:0.8rem; color:#8e949a;">Дата рождения:</label>
-      <input type="date" id="authDob" style="width:100%; margin-top:4px;">
-    </div>
-    <button onclick="submitAuth()">Продолжить</button>
-  </div>
-
-  <div id="settingsModal" class="modal">
-    <h2>Настройки профиля</h2>
-    <div style="text-align:center;">
-      <label for="setAvatarInput" style="cursor:pointer;">
-        <img id="setAvatarPreview" class="avatar" style="width:70px; height:70px; margin:auto;" src="" alt="Avatar">
-        <div style="font-size:0.8rem; color:#b83bde; margin-top:4px;">Сменить аватар</div>
-      </label>
-      <input type="file" id="setAvatarInput" accept="image/*" style="display:none" onchange="loadPreview(this, 'setAvatarPreview')">
-    </div>
-    <div>
-      <label style="font-size:0.8rem; color:#8e949a;">Дата рождения:</label>
-      <input type="date" id="setDob" style="width:100%; margin-top:4px;">
-    </div>
-    <div style="display:flex; align-items:center; gap:4px;">
-      <input type="password" id="setPass" placeholder="Новый пароль (4-20 символов)">
-      <button type="button" class="secondary" style="padding:10px;" onclick="togglePasswordVisibility('setPass', this)">👁</button>
-    </div>
-
-    <div id="userSuggestionsBox" style="border-top: 1px solid var(--border-color); margin-top:8px; padding-top:10px;">
-      <div style="font-weight:bold; font-size:0.85rem; margin-bottom:4px; color:#b83bde;">Предложения по улучшению</div>
-      <div style="font-size:0.75rem; color:#8e949a; margin-bottom:6px;">Отправьте сообщение heawyrt и w1len:</div>
-      <textarea id="suggestionInput" rows="2" placeholder="Ваши идеи..." style="width:100%; font-size:0.85rem; margin-bottom:6px;"></textarea>
-      <button onclick="sendUserSuggestion()" style="width:100%; padding:6px;">Отправить</button>
-    </div>
-
-    <button onclick="saveSettings()">Сохранить и выйти</button>
-    <button class="secondary" style="background:#d32f2f" onclick="logout()">Выйти</button>
-
-    <div style="text-align: center; color: #8e949a; font-size: 0.8rem; margin-top: 8px;">Версия 1.8.0</div>
-  </div>
-
-  <div id="forwardModal" class="modal">
-    <h2>Переслать сообщения</h2>
-    <div style="font-size:0.85rem; color:#8e949a;">Выберите чат для отправки:</div>
-    <div id="forwardChatsList" style="max-height:200px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
-    <button class="secondary" onclick="toggleModal('forwardModal', false)">Отмена</button>
-  </div>
-
-  <div id="groupSettingsModal" class="modal">
-    <h2 id="groupSettingsTitle">Управление группой</h2>
+    # Спам-фразы и блогеры
+    'мне доверили монтаж', 'viktor makarin', 'arina_alexx', 
+    'lady pop', 'про питер', 'илья стрижаков', 'ирина простолаки',
     
-    <div id="groupAvatarSection" style="text-align:center;">
-      <label for="setGroupAvatarInput" style="cursor:pointer;">
-        <img id="setGroupAvatarPreview" class="avatar" style="width:70px; height:70px; margin:auto;" src="" alt="Group Avatar">
-        <div style="font-size:0.8rem; color:#b83bde; margin-top:4px;">Сменить аватар группы/канала</div>
-      </label>
-      <input type="file" id="setGroupAvatarInput" accept="image/*" style="display:none" onchange="loadGroupAvatarPreview(this)">
-    </div>
+    # Забор спама AstroBot
+    'astrobot', 'астролог', 'натальная карта', '5 видео в день'
+]
 
-    <div id="founderRenameSection">
-      <label id="groupNameLabel" style="font-size:0.8rem; color:#8e949a;">Название группы:</label>
-      <div style="display:flex; gap:6px; margin-top:4px;">
-        <input type="text" id="editGroupNameInput">
-        <button onclick="renameGroup()">Сохранить</button>
-      </div>
-    </div>
+client = TelegramClient('session_userbot', API_ID, API_HASH)
+
+recent_channel_posts = {}
+sent_vacancies_cache = []
+
+
+# --- 2. УЛУЧШЕННАЯ ПРОВЕРКА ДУБЛИКАТОВ (12 ЧАСОВ) ---
+def clean_line(text: str) -> str:
+    # Удаляем спецсимволы, пунктуацию и приведи к нижнему регистру
+    return re.sub(r'[^\w\s]', '', text).strip().lower()
+
+def is_duplicate_vacancy(raw_text: str) -> bool:
+    now = time.time()
+    global sent_vacancies_cache
+    # Окно очистки: 12 часов (43 200 секунд)
+    sent_vacancies_cache = [v for v in sent_vacancies_cache if now - v["timestamp"] <= 43200]
     
-    <div id="addMemberLabel" style="font-size:0.85rem; font-weight:bold; margin-top:10px;">Добавить участника из друзей:</div>
-    <div style="display:flex; gap:6px;">
-      <select id="addMemberSelect" style="flex:1; background:var(--input-bg); color:#fff; border:none; border-radius:8px; padding:8px;"></select>
-      <button onclick="addMemberToGroup()">Добавить</button>
-    </div>
-
-    <div id="membersTitle" style="font-size:0.85rem; font-weight:bold; margin-top:10px;">Участники:</div>
-    <div id="groupMembersList" style="max-height:150px; overflow-y:auto;"></div>
-
-    <button id="leaveGroupBtn" class="secondary" style="background:#d32f2f;" onclick="leaveGroup()">Покинуть группу</button>
-    <button id="deleteGroupBtn" class="secondary" style="background:#900; display:none;" onclick="deleteGroup()">Удалить группу</button>
-    <button class="secondary" onclick="toggleModal('groupSettingsModal', false)">Закрыть</button>
-  </div>
-
-  <div id="createGroupModal" class="modal">
-    <h2>Создать группу</h2>
-    <input type="text" id="groupNameInput" placeholder="Название группы">
-    <div style="font-size:0.9rem; margin-top:6px;">Выберите друзей:</div>
-    <div id="friendsChecklist" style="max-height:150px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
-    <button onclick="submitCreateGroup()">Создать чат</button>
-    <button class="secondary" onclick="toggleModal('createGroupModal', false)">Отмена</button>
-  </div>
-
-  <div id="createChannelModal" class="modal">
-    <h2>Создать канал</h2>
-    <input type="text" id="channelNameInput" placeholder="Название канала">
-    <div style="font-size:0.9rem; margin-top:6px;">Пригласить друзей:</div>
-    <div id="channelFriendsChecklist" style="max-height:150px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
-    <button onclick="submitCreateChannel()">Создать канал</button>
-    <button class="secondary" onclick="toggleModal('createChannelModal', false)">Отмена</button>
-  </div>
-
-  <div id="appContainer" class="app-container">
-    <div class="sidebar">
-      <div class="sidebar-header">
-        <div class="user-info" onclick="toggleModal('settingsModal', true)">
-          <img id="myAvatar" class="avatar" style="width:32px; height:32px; display:none;">
-          <div id="myAvatarText" class="avatar" style="width:32px; height:32px;">U</div>
-          <span id="myName">User</span>
-          <span id="myAdminBadge"></span>
-        </div>
-        <div style="display:flex; gap:6px;">
-          <button class="secondary" style="padding:6px 10px; font-size:0.8rem;" onclick="openCreateGroupModal()" title="Создать группу">+</button>
-          <button class="secondary" style="padding:6px 10px; font-size:0.8rem;" onclick="openCreateChannelModal()" title="Создать канал">📢</button>
-          <button class="secondary" style="padding:6px 10px; font-size:0.8rem;" onclick="toggleModal('settingsModal', true)">⚙</button>
-        </div>
-      </div>
-
-      <div class="nav-tabs">
-        <div id="tabChatsBtn" class="nav-tab active" onclick="switchSidebarTab('chats')">Чаты</div>
-        <div id="tabFriendsBtn" class="nav-tab" onclick="switchSidebarTab('friends')">Друзья</div>
-      </div>
-
-      <div id="chatsTab" class="tab-content">
-        <div id="chatsList"></div>
-      </div>
-
-      <div id="friendsTab" class="tab-content" style="display:none;">
-        <div style="display:flex; gap:6px;">
-          <input type="text" id="addFriendName" placeholder="Никнейм друга" style="font-size:0.85rem;">
-          <button onclick="sendFriendRequest()" style="padding:8px 12px;">+</button>
-        </div>
-        <div style="font-size:0.8rem; color:#8e949a; margin-top:10px;">ЗАЯВКИ В ДРУЗЬЯ</div>
-        <div id="requestsList"></div>
-        <div style="font-size:0.8rem; color:#8e949a; margin-top:10px;">МОИ ДРУЗЬЯ</div>
-        <div id="friendsList"></div>
-      </div>
-    </div>
-
-    <div class="chat-main">
-      <div id="selectionBar" class="selection-top-bar">
-        <span>Выбрано: <b id="selectedCount">0</b></span>
-        <div style="display:flex; gap:6px;">
-          <button id="pinSelectedBtn" onclick="pinSelectedMessage()" class="secondary" style="padding:4px 10px;">📌 Закрепить</button>
-          <button id="editSelectedBtn" onclick="editSelectedMessage()" class="secondary" style="padding:4px 10px; display:none;">✏ Редактировать</button>
-          <button onclick="copySelectedMessages()" class="secondary" style="padding:4px 10px;">📋 Копировать</button>
-          <button onclick="openForwardModal()" class="secondary" style="padding:4px 10px;">↪ Переслать</button>
-          <button id="deleteSelectedBtn" onclick="deleteSelectedMessages()" class="secondary" style="background:#d32f2f; padding:4px 10px;">🗑 Удалить</button>
-          <button onclick="clearSelection()" class="secondary" style="padding:4px 8px;">✕</button>
-        </div>
-      </div>
-
-      <div id="chatHeader" class="chat-header">
-        <div style="display:flex; align-items:center; gap:10px;">
-          <button class="back-btn" onclick="closeChatView()">←</button>
-          <div id="activeChatAvatar" class="avatar">C</div>
-          <div>
-            <div id="activeChatName" style="display:flex; align-items:center; gap:4px;">Выберите чат</div>
-            <div id="activeChatSub" style="font-size:0.75rem; color:#8e949a;"></div>
-          </div>
-        </div>
-        <button id="groupSettingsBtn" class="secondary" style="display:none; padding:6px 10px;" onclick="openGroupSettings()">⚙ Настройки</button>
-      </div>
-
-      <div id="pinnedMsgBar" class="pinned-msg-bar" onclick="scrollToPinnedMessage()">
-        <div>📌 <span id="pinnedMsgText" class="text">Закрепленное сообщение</span></div>
-        <button class="secondary" style="padding:2px 6px;" onclick="unpinCurrentMessage(event)">✕</button>
-      </div>
-
-      <div id="messagesArea" class="messages-area"></div>
-
-      <div id="actionPreviewBar" class="action-preview-bar">
-        <div id="actionPreviewText"></div>
-        <button class="secondary" onclick="cancelActionPreview()" style="padding:2px 6px;">✕</button>
-      </div>
-
-      <div id="imgPreviewBar" class="action-preview-bar" style="background:#121921;">
-        <img id="imgPreview" src="" alt="preview" style="height:40px; border-radius:4px;">
-        <span style="font-size:0.85rem; flex:1; margin-left:8px;">Фото готово к отправке</span>
-        <button class="secondary" onclick="cancelImage()" style="padding:2px 6px;">✕</button>
-      </div>
-
-      <form id="chatForm" class="input-area" onsubmit="handleSendMsg(event)">
-        <label class="photo-btn" title="Отправить фото">
-          📷
-          <input type="file" id="msgPhotoInput" accept="image/*" style="display:none;" onchange="handleMsgPhoto(this)">
-        </label>
-        <input type="text" id="msgInput" placeholder="Напишите сообщение..." autocomplete="off">
-        <button type="submit" id="sendBtn">Отправить</button>
-      </form>
-      <div id="channelNotice" style="display:none; padding:12px; text-align:center; color:#8e949a; font-size:0.85rem; background:#0e1621; border-top:1px solid var(--border-color);">
-        Только создатель канала может публиковать посты.
-      </div>
-    </div>
-  </div>
-
-  <script src="/socket.io/socket.io.js"></script>
-  <script>
-    const socket = io();
-    let authMode = 'login';
-    let currentUser = JSON.parse(localStorage.getItem('wallchat_user') || 'null');
-    let tempAvatarBase64 = '';
-    let tempGroupAvatarBase64 = '';
-    let selectedImageBase64 = null;
-
-    let activeChat = null;
-    let myData = { friends: [], friendRequests: [], groups: [], dob: null };
-    let currentHistory = [];
-    let currentPinnedMsg = null;
-
-    let pinnedChatIds = new Set(JSON.parse(localStorage.getItem('wallchat_pinned_chats') || '[]'));
-
-    let selectedMsgIds = new Set();
-    let replyToMsg = null;
-    let editingMsgId = null;
-
-    const unreadCounts = {};
-
-    const EMOJIS = ['👍', '❤️', '😂', '🔥', '😮', '😢'];
-    const adminCheckmarkSVG = `<span class="admin-badge" title="Администратор"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2l2.4 1.8 3-.4.8 2.9 2.8 1.2-.8 2.9.8 2.9-2.8 1.2-.8 2.9-3-.4L12 22l-2.4-1.8-3 .4-.8-2.9-2.8-1.2.8-2.9-.8-2.9 2.8-1.2.8-2.9 3 .4L12 2z" fill="#3558d0" stroke="#b83bde" stroke-width="1.5"/><path d="M9 12l2 2 4-4" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg></span>`;
-
-    function initApp() {
-      if (currentUser) {
-        document.getElementById('authScreen').classList.remove('active');
-        document.getElementById('appContainer').classList.add('active');
-        loadMyData();
-      } else {
-        document.getElementById('authScreen').classList.add('active');
-        document.getElementById('appContainer').classList.remove('active');
-      }
-    }
-
-    function toggleModal(id, show) {
-      document.getElementById(id).classList.toggle('active', show);
-    }
-
-    function togglePasswordVisibility(id, btn) {
-      const input = document.getElementById(id);
-      if (input.type === 'password') {
-        input.type = 'text';
-        btn.textContent = '🙈';
-      } else {
-        input.type = 'password';
-        btn.textContent = '👁';
-      }
-    }
-
-    function switchAuthTab(mode) {
-      authMode = mode;
-      document.getElementById('regAvatarBox').style.display = mode === 'reg' ? 'block' : 'none';
-      document.getElementById('regDobBox').style.display = mode === 'reg' ? 'block' : 'none';
-      document.getElementById('regHint').style.display = mode === 'reg' ? 'block' : 'none';
-      document.getElementById('tabLogin').className = mode === 'login' ? '' : 'secondary';
-      document.getElementById('tabReg').className = mode === 'reg' ? '' : 'secondary';
-    }
-
-    function loadPreview(input, imgId) {
-      const file = input.files[0];
-      if (file) {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          document.getElementById(imgId).src = e.target.result;
-          tempAvatarBase64 = e.target.result;
-        };
-        reader.readAsDataURL(file);
-      }
-    }
-
-    function loadGroupAvatarPreview(input) {
-      const file = input.files[0];
-      if (file) {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          document.getElementById('setGroupAvatarPreview').src = e.target.result;
-          tempGroupAvatarBase64 = e.target.result;
-        };
-        reader.readAsDataURL(file);
-      }
-    }
-
-    async function submitAuth() {
-      const username = document.getElementById('authName').value.trim();
-      const password = document.getElementById('authPass').value.trim();
-      const dob = document.getElementById('authDob').value;
-      if (!username || !password) return alert('Заполните поля');
-
-      if (authMode === 'reg' && (password.length < 4 || password.length > 20)) {
-        return alert('Длина пароля должна быть от 4 до 20 символов');
-      }
-
-      const endpoint = authMode === 'login' ? '/api/login' : '/api/register';
-      const body = { username, password, avatar: authMode === 'reg' ? tempAvatarBase64 : undefined, dob };
-
-      const res = await fetch(endpoint, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
-      const data = await res.json();
-
-      if (res.ok) {
-        currentUser = data;
-        localStorage.setItem('wallchat_user', JSON.stringify(data));
-        initApp();
-      } else {
-        alert(data.error);
-      }
-    }
-
-    async function loadMyData() {
-      if (!currentUser) return;
-      const res = await fetch('/api/me', { headers: { 'Authorization': `Bearer ${currentUser.token}` } });
-      if (res.ok) {
-        myData = await res.json();
+    raw_lines = [clean_line(line) for line in raw_text.split('\n')]
+    new_lines = [line for line in raw_lines if len(line) > 5]
+    
+    if not new_lines:
+        return False
         
-        if (currentUser.isAdmin) {
-          document.getElementById('userSuggestionsBox').style.display = 'none';
-        } else {
-          document.getElementById('userSuggestionsBox').style.display = 'block';
+    new_lines_set = set(new_lines)
+    total_lines = len(new_lines_set)
+    
+    for item in sent_vacancies_cache:
+        matching_lines = len(new_lines_set.intersection(item["lines"]))
+        if total_lines >= 3 and matching_lines >= 3:
+            return True
+        elif total_lines < 3 and matching_lines == total_lines:
+            return True
+            
+    return False
+
+def register_sent_vacancy(raw_text: str):
+    raw_lines = [clean_line(line) for line in raw_text.split('\n')]
+    lines = set([line for line in raw_lines if len(line) > 5])
+    sent_vacancies_cache.append({
+        "lines": lines,
+        "timestamp": time.time()
+    })
+
+
+# --- 3. JSON ИСТОРИЯ И ДАТАСЕТ ---
+def load_json(filepath, default):
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[-] Ошибка чтения {filepath}: {e}")
+    return default
+
+def save_json(filepath, data):
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[-] Ошибка записи {filepath}: {e}")
+
+
+# --- 4. ИИ-АНАЛИЗ (Gemini API с подробными логами) ---
+async def evaluate_with_ai(text: str) -> bool:
+    if not GEMINI_API_KEY:
+        print("[!] GEMINI_API_KEY отсутствует в переменных окружения. ИИ пропущен.")
+        return True
+
+    print(f"[AI] Отправляем текст в Gemini API (длина: {len(text)} симв.)...")
+    
+    dataset = load_json(DATASET_FILE, {"likes": [], "dislikes": []})
+    good_examples = dataset.get("likes", [])[-5:]
+    bad_examples = dataset.get("dislikes", [])[-5:]
+
+    prompt = f"""
+Ты — фильтр вакансий для видеомонтажера (Reels, Shorts, TikTok).
+Оцени текст и ответь, является ли он РЕАЛЬНОЙ ВАКАНСИЕЙ (работодатель ищет исполнителя).
+
+ПРИМЕРЫ ХОРОШИХ ВАКАНСИЙ (Одобрены):
+{json.dumps(good_examples, ensure_ascii=False)}
+
+ПРИМЕРЫ МУСОРА ИЛИ РЕЗЮМЕ (Отклонены):
+{json.dumps(bad_examples, ensure_ascii=False)}
+
+Текст для оценки:
+"{text}"
+
+Ответь СТРОГО одним словом: YES (если это вакансия) или NO (если это резюме, услуги, SMM или мусор).
+"""
+    # Модель gemini-1.5-flash с прямой поддержкой REST v1beta
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+
+    try:
+        async with ClientSession() as session:
+            async with session.post(url, json=payload, timeout=10) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    answer = data['candidates'][0]['content']['parts'][0]['text'].strip().upper()
+                    print(f"[AI] Ответ от Gemini: {answer}")
+                    return 'YES' in answer
+                else:
+                    err_body = await resp.text()
+                    print(f"[-] Ошибка ответа Gemini API (Status {resp.status}): {err_body}")
+    except Exception as e:
+        print(f"[-] Ошибка соединения с Gemini API: {e}")
+    return True
+
+
+# --- 5. TELEGRAM BOT API ---
+async def send_to_bot(text: str) -> int | None:
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": MY_CHAT_ID,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+        "reply_markup": {
+            "inline_keyboard": [[
+                {"text": "👍 Подходит", "callback_data": "vote_like"},
+                {"text": "👎 Мусор", "callback_data": "vote_dislike"}
+            ]]
         }
-
-        if (myData.avatar) {
-          currentUser.avatar = myData.avatar;
-          localStorage.setItem('wallchat_user', JSON.stringify(currentUser));
-        }
-
-        renderSidebar();
-      } else {
-        logout();
-      }
     }
+    async with ClientSession() as session:
+        async with session.post(url, json=payload) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                return data.get("result", {}).get("message_id")
+            else:
+                print(f"[-] Ошибка отправки: {await resp.text()}")
+                return None
 
-    function togglePinChat(chatId, e) {
-      if (e) e.stopPropagation();
-      if (pinnedChatIds.has(chatId)) {
-        pinnedChatIds.delete(chatId);
-      } else {
-        pinnedChatIds.add(chatId);
-      }
-      localStorage.setItem('wallchat_pinned_chats', JSON.stringify(Array.from(pinnedChatIds)));
-      renderSidebar();
+async def delete_bot_message(msg_id: int):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage"
+    payload = {"chat_id": MY_CHAT_ID, "message_id": msg_id}
+    async with ClientSession() as session:
+        await session.post(url, json=payload)
+
+async def edit_bot_message_text(msg_id: int, text: str):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageText"
+    payload = {
+        "chat_id": MY_CHAT_ID,
+        "message_id": msg_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
     }
+    async with ClientSession() as session:
+        await session.post(url, json=payload)
 
-    function createChatItemElement(chat) {
-      const item = document.createElement('div');
-      item.className = `chat-item ${activeChat?.id === chat.id ? 'active' : ''}`;
-      item.onclick = () => openChat(chat);
+async def answer_callback_query(callback_id: str, text: str):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/answerCallbackQuery"
+    payload = {"callback_query_id": callback_id, "text": text}
+    async with ClientSession() as session:
+        await session.post(url, json=payload)
 
-      const isPinned = pinnedChatIds.has(chat.id);
-      const pinBtnHTML = `<button class="pin-btn-chat ${isPinned ? 'pinned' : ''}" onclick="togglePinChat('${chat.id}', event)" title="${isPinned ? 'Открепить' : 'Закрепить'}">📌</button>`;
 
-      const count = unreadCounts[chat.id] || 0;
-      const unreadBadge = count > 0 ? `<span class="unread-badge">${count}</span>` : '';
+# --- 6. ОБРАБОТКА КНОПОК 👍 / 👎 ---
+async def bot_updates_loop():
+    offset = 0
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
+    while True:
+        try:
+            async with ClientSession() as session:
+                async with session.get(url, params={"offset": offset, "timeout": 20}) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        for update in data.get("result", []):
+                            offset = update["update_id"] + 1
+                            if "callback_query" in update:
+                                cb = update["callback_query"]
+                                cb_id = cb["id"]
+                                data_cb = cb.get("data")
+                                msg = cb.get("message", {})
+                                msg_id = msg.get("message_id")
+                                raw_text = msg.get("text", "")
 
-      let avatarHTML = '';
-      if (chat.type === 'wallchat') {
-        avatarHTML = `<div class="avatar" style="background:var(--primary-gradient);">📢</div>`;
-      } else if (chat.type === 'saved') {
-        avatarHTML = `<div class="avatar" style="background:var(--primary-gradient);">⭐</div>`;
-      } else if (chat.type === 'suggestions') {
-        avatarHTML = `<div class="avatar" style="background:linear-gradient(135deg, #ff9800, #b83bde);">💡</div>`;
-      } else if (chat.avatar) {
-        avatarHTML = `<img class="avatar" src="${chat.avatar}">`;
-      } else {
-        const icon = chat.type === 'channel' ? '📢' : (chat.type === 'group' ? '👥' : chat.name[0].toUpperCase());
-        avatarHTML = `<div class="avatar">${icon}</div>`;
-      }
+                                dataset = load_json(DATASET_FILE, {"likes": [], "dislikes": []})
 
-      let subtext = '';
-      if (chat.type === 'channel' && chat.groupData) {
-        subtext = `${chat.groupData.members.length} подписчиков`;
-      }
+                                if data_cb == "vote_like":
+                                    dataset["likes"].append(raw_text)
+                                    save_json(DATASET_FILE, dataset)
+                                    await answer_callback_query(cb_id, "Записано: Подходит 👍")
+                                    await edit_bot_message_text(msg_id, f"✅ <b>[ОДОБРЕНО]</b>\n\n{html.escape(raw_text)}")
+                                
+                                elif data_cb == "vote_dislike":
+                                    dataset["dislikes"].append(raw_text)
+                                    save_json(DATASET_FILE, dataset)
+                                    await answer_callback_query(cb_id, "Записано в мусор 👎")
+                                    await delete_bot_message(msg_id)
 
-      item.innerHTML = `
-        ${avatarHTML}
-        <div class="info">
-          <div class="name">${chat.name} ${chat.isAdmin ? adminCheckmarkSVG : ''} ${chat.isFounder ? '<span class="founder-badge">Founder</span>' : ''}</div>
-          ${subtext ? `<div style="font-size:0.75rem; color:#8e949a;">${subtext}</div>` : ''}
-        </div>
-        ${unreadBadge}
-        ${pinBtnHTML}
-      `;
-      return item;
-    }
+                                    history = load_json(HISTORY_FILE, [])
+                                    history = [h for h in history if h.get("msg_id") != msg_id]
+                                    save_json(HISTORY_FILE, history)
+        except Exception as e:
+            print(f"[-] Ошибка в опросе кнопок бота: {e}")
+        await asyncio.sleep(2)
 
-    function renderSidebar() {
-      document.getElementById('myName').textContent = currentUser.username;
-      document.getElementById('myAdminBadge').innerHTML = currentUser.isAdmin ? adminCheckmarkSVG : '';
-      document.getElementById('setDob').value = myData.dob || '';
 
-      if (currentUser.avatar) {
-        document.getElementById('myAvatar').src = currentUser.avatar;
-        document.getElementById('myAvatar').style.display = 'block';
-        document.getElementById('myAvatarText').style.display = 'none';
-        document.getElementById('setAvatarPreview').src = currentUser.avatar;
-      } else {
-        document.getElementById('myAvatarText').textContent = currentUser.username[0].toUpperCase();
-        document.getElementById('myAvatarText').style.display = 'flex';
-        document.getElementById('myAvatar').style.display = 'none';
-      }
+# --- 7. ФОНОВЫЕ ЗАДАЧИ ---
+async def auto_delete_old_messages_loop():
+    THREE_DAYS_SEC = 3 * 24 * 3600
+    while True:
+        await asyncio.sleep(600)
+        try:
+            history = load_json(HISTORY_FILE, [])
+            if not history:
+                continue
+            
+            now = time.time()
+            updated_history = []
+            for item in history:
+                msg_id = item.get("msg_id")
+                ts = item.get("timestamp", 0)
+                if now - ts >= THREE_DAYS_SEC:
+                    if msg_id:
+                        await delete_bot_message(msg_id)
+                        print(f"[x] Сообщение {msg_id} удалено (3 дня).")
+                else:
+                    updated_history.append(item)
+            
+            if len(updated_history) != len(history):
+                save_json(HISTORY_FILE, updated_history)
+        except Exception as e:
+            print(f"[-] Ошибка автоудаления: {e}")
 
-      const chatsList = document.getElementById('chatsList');
-      chatsList.innerHTML = '';
+async def cleanup_recent_posts_loop():
+    while True:
+        await asyncio.sleep(120)
+        now = time.time()
+        to_del = [k for k, v in recent_channel_posts.items() if now - v["timestamp"] > 300]
+        for k in to_del:
+            recent_channel_posts.pop(k, None)
 
-      const allChats = [];
 
-      // 0. Канал wallchat (для всех)
-      allChats.push({
-        type: 'wallchat',
-        id: 'wallchat',
-        name: 'wallchat',
-        avatar: null,
-        isAdmin: true
-      });
+# --- 8. ВЕБ-СЕРВЕР ---
+async def handle_ping(request):
+    return web.Response(text="Бот активен")
 
-      // 1. Избранное
-      allChats.push({
-        type: 'saved',
-        id: 'saved',
-        name: 'Избранное',
-        avatar: null
-      });
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    print(f"[+] Веб-сервер запущен на порту {port}")
 
-      // 2. Предложка (для админов)
-      if (currentUser.isAdmin) {
-        allChats.push({
-          type: 'suggestions',
-          id: 'suggestions',
-          name: 'Предложка',
-          avatar: null
-        });
-      }
 
-      // 3. Личные чаты (Друзья)
-      myData.friends.forEach(f => {
-        allChats.push({
-          type: 'dm',
-          id: f.username,
-          name: f.username,
-          avatar: f.avatar,
-          isAdmin: f.isAdmin
-        });
-      });
-
-      // 4. Группы и Каналы
-      myData.groups.forEach(g => {
-        allChats.push({
-          type: g.type || 'group',
-          id: g.id,
-          name: g.name,
-          avatar: g.avatar,
-          isFounder: g.isFounder,
-          groupData: g
-        });
-      });
-
-      // Сортировка: Закрепленные чаты выходят наверх
-      allChats.sort((a, b) => {
-        const aPinned = pinnedChatIds.has(a.id);
-        const bPinned = pinnedChatIds.has(b.id);
-        if (aPinned && !bPinned) return -1;
-        if (!aPinned && bPinned) return 1;
-        return 0;
-      });
-
-      allChats.forEach(chat => {
-        chatsList.appendChild(createChatItemElement(chat));
-      });
-
-      // Заявки и друзья
-      const reqList = document.getElementById('requestsList');
-      reqList.innerHTML = myData.friendRequests.length === 0 ? '<div style="font-size:0.8rem; color:#666;">Нет заявок</div>' : '';
-      myData.friendRequests.forEach(r => {
-        const item = document.createElement('div');
-        item.className = 'chat-item';
-        item.innerHTML = `
-          <div class="info"><div class="name">${r.username}</div></div>
-          <button onclick="acceptRequest('${r.username}')" style="padding:4px 8px;">✓</button>
-          <button onclick="rejectRequest('${r.username}')" class="secondary" style="padding:4px 8px;">✕</button>
-        `;
-        reqList.appendChild(item);
-      });
-
-      const fList = document.getElementById('friendsList');
-      fList.innerHTML = myData.friends.length === 0 ? '<div style="font-size:0.8rem; color:#666;">Список пуст</div>' : '';
-      myData.friends.forEach(f => {
-        const item = document.createElement('div');
-        item.className = 'chat-item';
-        item.onclick = () => { switchSidebarTab('chats'); openChat({ type: 'dm', id: f.username, name: f.username, avatar: f.avatar, isAdmin: f.isAdmin }); };
-        item.innerHTML = `<div class="name">${f.username} ${f.isAdmin ? adminCheckmarkSVG : ''}</div>`;
-        fList.appendChild(item);
-      });
-    }
-
-    function switchSidebarTab(tab) {
-      document.getElementById('chatsTab').style.display = tab === 'chats' ? 'flex' : 'none';
-      document.getElementById('friendsTab').style.display = tab === 'friends' ? 'flex' : 'none';
-      document.getElementById('tabChatsBtn').className = `nav-tab ${tab === 'chats' ? 'active' : ''}`;
-      document.getElementById('tabFriendsBtn').className = `nav-tab ${tab === 'friends' ? 'active' : ''}`;
-    }
-
-    async function sendUserSuggestion() {
-      const text = document.getElementById('suggestionInput').value.trim();
-      if (!text) return alert('Введите текст');
-
-      const res = await fetch('/api/suggestions/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
-        body: JSON.stringify({ text })
-      });
-      const data = await res.json();
-      alert(data.message || data.error);
-      if (res.ok) document.getElementById('suggestionInput').value = '';
-    }
-
-    async function sendFriendRequest() {
-      const name = document.getElementById('addFriendName').value.trim();
-      if (!name) return;
-      const res = await fetch('/api/friends/request', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
-        body: JSON.stringify({ targetUsername: name })
-      });
-      const data = await res.json();
-      alert(data.message || data.error);
-      if (res.ok) { document.getElementById('addFriendName').value = ''; loadMyData(); }
-    }
-
-    async function acceptRequest(requesterUsername) {
-      await fetch('/api/friends/accept', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
-        body: JSON.stringify({ requesterUsername })
-      });
-      loadMyData();
-    }
-
-    async function rejectRequest(requesterUsername) {
-      await fetch('/api/friends/reject', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
-        body: JSON.stringify({ requesterUsername })
-      });
-      loadMyData();
-    }
-
-    function openCreateGroupModal() {
-      const checklist = document.getElementById('friendsChecklist');
-      checklist.innerHTML = myData.friends.length === 0 ? 'Добавьте друзей' : '';
-      myData.friends.forEach(f => {
-        const label = document.createElement('label');
-        label.style.display = 'flex'; label.style.gap = '8px';
-        label.innerHTML = `<input type="checkbox" value="${f.username}"> ${f.username}`;
-        checklist.appendChild(label);
-      });
-      toggleModal('createGroupModal', true);
-    }
-
-    async function submitCreateGroup() {
-      const groupName = document.getElementById('groupNameInput').value.trim();
-      if (!groupName) return alert('Введите название');
-      const checked = Array.from(document.querySelectorAll('#friendsChecklist input:checked')).map(cb => cb.value);
-
-      const res = await fetch('/api/groups/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
-        body: JSON.stringify({ groupName, memberUsernames: checked })
-      });
-      if (res.ok) {
-        toggleModal('createGroupModal', false);
-        document.getElementById('groupNameInput').value = '';
-        await loadMyData();
-      }
-    }
-
-    function openCreateChannelModal() {
-      const checklist = document.getElementById('channelFriendsChecklist');
-      checklist.innerHTML = myData.friends.length === 0 ? 'Добавьте друзей' : '';
-      myData.friends.forEach(f => {
-        const label = document.createElement('label');
-        label.style.display = 'flex'; label.style.gap = '8px';
-        label.innerHTML = `<input type="checkbox" value="${f.username}"> ${f.username}`;
-        checklist.appendChild(label);
-      });
-      toggleModal('createChannelModal', true);
-    }
-
-    async function submitCreateChannel() {
-      const channelName = document.getElementById('channelNameInput').value.trim();
-      if (!channelName) return alert('Введите название');
-      const checked = Array.from(document.querySelectorAll('#channelFriendsChecklist input:checked')).map(cb => cb.value);
-
-      const res = await fetch('/api/channels/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
-        body: JSON.stringify({ channelName, memberUsernames: checked })
-      });
-      if (res.ok) {
-        toggleModal('createChannelModal', false);
-        document.getElementById('channelNameInput').value = '';
-        await loadMyData();
-      }
-    }
-
-    async function openGroupSettings() {
-      if (!activeChat || (activeChat.type !== 'group' && activeChat.type !== 'channel')) return;
-
-      await loadMyData();
-      const group = myData.groups.find(g => g.id === activeChat.id);
-      if (!group) return;
-
-      activeChat.groupData = group;
-      const isFounder = group.isFounder;
-      const isChannel = group.type === 'channel';
-
-      document.getElementById('groupSettingsTitle').textContent = isChannel ? 'Управление каналом' : 'Управление группой';
-      document.getElementById('groupNameLabel').textContent = isChannel ? 'Название канала:' : 'Название группы:';
-      document.getElementById('addMemberLabel').textContent = isChannel ? 'Добавить подписчика из друзей:' : 'Добавить участника из друзей:';
-      document.getElementById('membersTitle').textContent = isChannel ? 'Подписчики:' : 'Участники:';
-      document.getElementById('leaveGroupBtn').textContent = isChannel ? 'Покинуть канал' : 'Покинуть группу';
-      document.getElementById('deleteGroupBtn').textContent = isChannel ? 'Удалить канал' : 'Удалить группу';
-
-      if (group.avatar) {
-        document.getElementById('setGroupAvatarPreview').src = group.avatar;
-      } else {
-        document.getElementById('setGroupAvatarPreview').src = '';
-      }
-
-      document.getElementById('editGroupNameInput').value = group.name;
-      document.getElementById('groupAvatarSection').style.display = isFounder ? 'block' : 'none';
-      document.getElementById('founderRenameSection').style.display = isFounder ? 'block' : 'none';
-      document.getElementById('deleteGroupBtn').style.display = isFounder ? 'block' : 'none';
-
-      const select = document.getElementById('addMemberSelect');
-      select.innerHTML = '<option value="">Выберите друга...</option>';
-      const currentMemberNames = group.members.map(m => m.username);
-      
-      const addableFriends = myData.friends.filter(f => !currentMemberNames.includes(f.username));
-      addableFriends.forEach(f => {
-        const opt = document.createElement('option');
-        opt.value = f.username;
-        opt.textContent = f.username;
-        select.appendChild(opt);
-      });
-
-      const membersList = document.getElementById('groupMembersList');
-      membersList.innerHTML = '';
-      
-      group.members.forEach(m => {
-        const div = document.createElement('div');
-        div.className = 'member-item';
+# --- 9. ОБРАБОТКА ВАКАНСИЙ И СЕРВЕРА TELEGRAM ---
+@client.on(events.MessageDeleted())
+async def handle_deleted_message(event):
+    now = time.time()
+    chat_id = getattr(event, 'chat_id', None)
+    
+    for deleted_id in event.deleted_ids:
+        matched_keys = []
+        for (c_id, m_id) in list(recent_channel_posts.keys()):
+            if m_id == deleted_id:
+                if chat_id is None or c_id == chat_id:
+                    matched_keys.append((c_id, m_id))
         
-        let removeBtnHTML = '';
-        if (isFounder && m.username !== currentUser.username) {
-          removeBtnHTML = `<button onclick="removeMemberFromGroup('${m.username}')" class="secondary" style="background:#d32f2f; padding:2px 8px; font-size:0.75rem;">Удалить</button>`;
-        }
-
-        div.innerHTML = `
-          <span>${m.username} ${m.isFounder ? '<span class="founder-badge">Founder</span>' : ''} ${m.isAdmin ? adminCheckmarkSVG : ''}</span>
-          ${removeBtnHTML}
-        `;
-        membersList.appendChild(div);
-      });
-
-      toggleModal('groupSettingsModal', true);
-    }
-
-    async function addMemberToGroup() {
-      if (!activeChat || (activeChat.type !== 'group' && activeChat.type !== 'channel')) return;
-      const select = document.getElementById('addMemberSelect');
-      const targetUsername = select.value;
-      if (!targetUsername) return alert('Выберите друга из списка');
-
-      const res = await fetch('/api/groups/add-member', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
-        body: JSON.stringify({ groupId: activeChat.id, targetUsername })
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        await openGroupSettings();
-      } else {
-        alert(data.error || 'Ошибка при добавлении');
-      }
-    }
-
-    async function removeMemberFromGroup(targetUsername) {
-      if (!activeChat || (activeChat.type !== 'group' && activeChat.type !== 'channel')) return;
-      if (!confirm(`Удалить ${targetUsername}?`)) return;
-
-      const res = await fetch('/api/groups/remove-member', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
-        body: JSON.stringify({ groupId: activeChat.id, targetUsername })
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        await openGroupSettings();
-      } else {
-        alert(data.error || 'Ошибка при удалении');
-      }
-    }
-
-    async function renameGroup() {
-      if (!activeChat || (activeChat.type !== 'group' && activeChat.type !== 'channel')) return;
-      const newName = document.getElementById('editGroupNameInput').value.trim();
-      if (!newName) return alert('Введите новое название');
-
-      const body = { groupId: activeChat.id, newName };
-      if (tempGroupAvatarBase64) body.avatar = tempGroupAvatarBase64;
-
-      const res = await fetch('/api/groups/rename', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
-        body: JSON.stringify(body)
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        activeChat.name = newName;
-        if (data.avatar) activeChat.avatar = data.avatar;
-        document.getElementById('activeChatName').innerHTML = `${newName}`;
-        tempGroupAvatarBase64 = '';
-        await openGroupSettings();
-        renderSidebar();
-      } else {
-        alert(data.error || 'Ошибка при переименовании');
-      }
-    }
-
-    async function leaveGroup() {
-      if (!activeChat || (activeChat.type !== 'group' && activeChat.type !== 'channel')) return;
-      if (!confirm('Вы уверены, что хотите покинуть это сообщество?')) return;
-
-      const res = await fetch('/api/groups/leave', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
-        body: JSON.stringify({ groupId: activeChat.id })
-      });
-
-      if (res.ok) {
-        toggleModal('groupSettingsModal', false);
-        closeChatView();
-        await loadMyData();
-      } else {
-        const data = await res.json();
-        alert(data.error || 'Ошибка');
-      }
-    }
-
-    async function deleteGroup() {
-      if (!activeChat || (activeChat.type !== 'group' && activeChat.type !== 'channel')) return;
-      if (!confirm('Вы уверены, что хотите полностью удалить?')) return;
-
-      const res = await fetch('/api/groups/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
-        body: JSON.stringify({ groupId: activeChat.id })
-      });
-
-      if (res.ok) {
-        toggleModal('groupSettingsModal', false);
-        closeChatView();
-        await loadMyData();
-      } else {
-        const data = await res.json();
-        alert(data.error || 'Ошибка');
-      }
-    }
-
-    function openChat(chat) {
-      activeChat = chat;
-      clearSelection();
-      cancelActionPreview();
-
-      unreadCounts[chat.id] = 0;
-      renderSidebar();
-
-      document.body.classList.add('chat-open');
-
-      document.getElementById('activeChatName').innerHTML = `${chat.name} ${chat.isAdmin ? adminCheckmarkSVG : ''}`;
-      
-      if (chat.type === 'channel') {
-        const subsCount = chat.groupData ? chat.groupData.members.length : 0;
-        document.getElementById('activeChatSub').textContent = `${subsCount} подписчиков`;
-      } else if (chat.type === 'wallchat') {
-        document.getElementById('activeChatSub').textContent = 'Официальный канал';
-      } else {
-        document.getElementById('activeChatSub').textContent = 
-          chat.type === 'saved' ? 'Ваши заметки' :
-          (chat.type === 'suggestions' ? 'Идеи' : (chat.type === 'dm' ? 'Личный чат' : 'Группа'));
-      }
-
-      document.getElementById('groupSettingsBtn').style.display = (chat.type === 'group' || chat.type === 'channel') ? 'block' : 'none';
-
-      // Ограничения ввода сообщений
-      const isChannel = chat.type === 'channel';
-      const isWallchat = chat.type === 'wallchat';
-      const isCreator = chat.groupData && chat.groupData.createdBy === currentUser.username;
-      const isAdminUser = currentUser.isAdmin;
-
-      if ((isChannel && !isCreator) || (isWallchat && !isAdminUser)) {
-        document.getElementById('chatForm').style.display = 'none';
-        document.getElementById('channelNotice').style.display = 'block';
-        document.getElementById('channelNotice').textContent = isWallchat ? 'Публиковать сообщения могут только администраторы.' : 'Только создатель канала может публиковать посты.';
-      } else {
-        document.getElementById('chatForm').style.display = 'flex';
-        document.getElementById('channelNotice').style.display = 'none';
-      }
-
-      const avatarHeader = document.getElementById('activeChatAvatar');
-      if (chat.type === 'wallchat') {
-        avatarHeader.outerHTML = `<div id="activeChatAvatar" class="avatar" style="background:var(--primary-gradient)">📢</div>`;
-      } else if (chat.type === 'saved') {
-        avatarHeader.outerHTML = `<div id="activeChatAvatar" class="avatar" style="background:var(--primary-gradient)">⭐</div>`;
-      } else if (chat.type === 'suggestions') {
-        avatarHeader.outerHTML = `<div id="activeChatAvatar" class="avatar" style="background:linear-gradient(135deg, #ff9800, #b83bde)">💡</div>`;
-      } else if (chat.avatar) {
-        avatarHeader.outerHTML = `<img id="activeChatAvatar" class="avatar" src="${chat.avatar}">`;
-      } else {
-        avatarHeader.outerHTML = `<div id="activeChatAvatar" class="avatar">${chat.name[0].toUpperCase()}</div>`;
-      }
-
-      document.getElementById('messagesArea').innerHTML = '';
-      document.getElementById('pinnedMsgBar').style.display = 'none';
-      currentPinnedMsg = null;
-
-      socket.emit('join_room', { token: currentUser.token, chatType: chat.type, targetId: chat.id });
-    }
-
-    function closeChatView() {
-      document.body.classList.remove('chat-open');
-      activeChat = null;
-      renderSidebar();
-    }
-
-    function toggleSelectMessage(msgId) {
-      if (selectedMsgIds.has(msgId)) {
-        selectedMsgIds.delete(msgId);
-      } else {
-        selectedMsgIds.add(msgId);
-      }
-      updateSelectionUI();
-    }
-
-    function updateSelectionUI() {
-      const bar = document.getElementById('selectionBar');
-      const count = document.getElementById('selectedCount');
-      const editBtn = document.getElementById('editSelectedBtn');
-      const deleteBtn = document.getElementById('deleteSelectedBtn');
-
-      if (selectedMsgIds.size > 0) {
-        bar.style.display = 'flex';
-        count.textContent = selectedMsgIds.size;
-
-        const selectedMsgs = currentHistory.filter(m => selectedMsgIds.has(m.id));
-        const hasOtherUserMsgs = selectedMsgs.some(m => m.sender !== currentUser.username);
-
-        if (deleteBtn) {
-          deleteBtn.style.display = hasOtherUserMsgs ? 'none' : 'inline-block';
-        }
-
-        if (selectedMsgIds.size === 1) {
-          const firstId = Array.from(selectedMsgIds)[0];
-          const msg = currentHistory.find(m => m.id === firstId);
-          if (msg && msg.sender === currentUser.username) {
-            editBtn.style.display = 'inline-block';
-          } else {
-            editBtn.style.display = 'none';
-          }
-        } else {
-          editBtn.style.display = 'none';
-        }
-
-        document.querySelectorAll('.message-row').forEach(row => {
-          const id = Number(row.dataset.id);
-          row.classList.toggle('selected', selectedMsgIds.has(id));
-        });
-      } else {
-        bar.style.display = 'none';
-        document.querySelectorAll('.message-row').forEach(row => row.classList.remove('selected'));
-      }
-    }
-
-    function clearSelection() {
-      selectedMsgIds.clear();
-      updateSelectionUI();
-    }
-
-    function pinSelectedMessage() {
-      if (selectedMsgIds.size !== 1) return alert('Выберите одно сообщение для закрепления');
-      const msgId = Array.from(selectedMsgIds)[0];
-      socket.emit('pin_message', {
-        token: currentUser.token,
-        chatType: activeChat.type,
-        targetId: activeChat.id,
-        messageId: msgId
-      });
-      clearSelection();
-    }
-
-    function unpinCurrentMessage(e) {
-      if (e) e.stopPropagation();
-      socket.emit('pin_message', {
-        token: currentUser.token,
-        chatType: activeChat.type,
-        targetId: activeChat.id,
-        messageId: null
-      });
-    }
-
-    function scrollToPinnedMessage() {
-      if (!currentPinnedMsg) return;
-      const row = document.querySelector(`.message-row[data-id="${currentPinnedMsg.id}"]`);
-      if (row) {
-        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        row.classList.add('selected');
-        setTimeout(() => row.classList.remove('selected'), 1500);
-      }
-    }
-
-    function editSelectedMessage() {
-      const firstId = Array.from(selectedMsgIds)[0];
-      const msg = currentHistory.find(m => m.id === firstId);
-      if (msg) {
-        editingMsgId = msg.id;
-        document.getElementById('msgInput').value = msg.text;
-        document.getElementById('actionPreviewBar').style.display = 'flex';
-        document.getElementById('actionPreviewText').textContent = 'Редактирование сообщения...';
-      }
-    }
-
-    function copySelectedMessages() {
-      const selectedMsgs = currentHistory.filter(m => selectedMsgIds.has(m.id));
-      const textToCopy = selectedMsgs.map(m => `${m.sender}: ${m.text}`).join('\n');
-      navigator.clipboard.writeText(textToCopy);
-      alert('Скопировано в буфер обмена');
-      clearSelection();
-    }
-
-    function openForwardModal() {
-      const list = document.getElementById('forwardChatsList');
-      list.innerHTML = '';
-
-      myData.friends.forEach(f => {
-        const item = document.createElement('div');
-        item.className = 'chat-item';
-        item.onclick = () => forwardToChat('dm', f.username);
-        item.innerHTML = `<div class="name">${f.username}</div>`;
-        list.appendChild(item);
-      });
-
-      myData.groups.forEach(g => {
-        const item = document.createElement('div');
-        item.className = 'chat-item';
-        item.onclick = () => forwardToChat(g.type || 'group', g.id);
-        item.innerHTML = `<div class="name">${g.name}</div>`;
-        list.appendChild(item);
-      });
-
-      toggleModal('forwardModal', true);
-    }
-
-    function forwardToChat(type, targetId) {
-      const selectedMsgs = currentHistory.filter(m => selectedMsgIds.has(m.id));
-      selectedMsgs.forEach(m => {
-        socket.emit('send_message', {
-          token: currentUser.token,
-          chatType: type,
-          targetId: targetId,
-          text: `[Переслано от ${m.sender}]: ${m.text}`,
-          image: m.image
-        });
-      });
-      toggleModal('forwardModal', false);
-      clearSelection();
-    }
-
-    function deleteSelectedMessages() {
-      const mySelectedIds = Array.from(selectedMsgIds).filter(id => {
-        const msg = currentHistory.find(m => m.id === id);
-        return msg && msg.sender === currentUser.username;
-      });
-
-      if (mySelectedIds.length === 0) return;
-
-      if (!confirm('Удалить выбранные сообщения?')) return;
-      socket.emit('delete_messages', {
-        token: currentUser.token,
-        chatType: activeChat.type,
-        targetId: activeChat.id,
-        messageIds: mySelectedIds
-      });
-      clearSelection();
-    }
-
-    function cancelActionPreview() {
-      replyToMsg = null;
-      editingMsgId = null;
-      document.getElementById('actionPreviewBar').style.display = 'none';
-      document.getElementById('msgInput').value = '';
-    }
-
-    function handleMsgPhoto(input) {
-      const file = input.files[0];
-      if (file) {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          selectedImageBase64 = e.target.result;
-          document.getElementById('imgPreview').src = selectedImageBase64;
-          document.getElementById('imgPreviewBar').style.display = 'flex';
-        };
-        reader.readAsDataURL(file);
-      }
-    }
-
-    function cancelImage() {
-      selectedImageBase64 = null;
-      document.getElementById('imgPreviewBar').style.display = 'none';
-      document.getElementById('msgPhotoInput').value = '';
-    }
-
-    function handleSendMsg(e) {
-      e.preventDefault();
-      const text = document.getElementById('msgInput').value.trim();
-      if (!text && !selectedImageBase64) return;
-
-      socket.emit('send_message', {
-        token: currentUser.token,
-        chatType: activeChat.type,
-        targetId: activeChat.id,
-        text,
-        image: selectedImageBase64,
-        replyTo: replyToMsg,
-        editMsgId: editingMsgId
-      });
-
-      cancelActionPreview();
-      cancelImage();
-    }
-
-    function sendReaction(msgId, emoji) {
-      if (!activeChat) return;
-      socket.emit('add_reaction', {
-        token: currentUser.token,
-        chatType: activeChat.type,
-        targetId: activeChat.id,
-        messageId: msgId,
-        emoji: emoji
-      });
-    }
-
-    function sendComment(msgId) {
-      const input = document.getElementById(`comment-input-${msgId}`);
-      if (!input) return;
-      const text = input.value.trim();
-      if (!text) return;
-
-      socket.emit('add_comment', {
-        token: currentUser.token,
-        chatType: activeChat.type,
-        targetId: activeChat.id,
-        messageId: msgId,
-        text: text
-      });
-      input.value = '';
-    }
-
-    function toggleCommentsBox(msgId) {
-      const box = document.getElementById(`comments-box-${msgId}`);
-      if (box) {
-        box.style.display = box.style.display === 'none' ? 'block' : 'none';
-      }
-    }
-
-    function updatePinnedMsgUI(pinnedMsg) {
-      currentPinnedMsg = pinnedMsg;
-      const bar = document.getElementById('pinnedMsgBar');
-      const textSpan = document.getElementById('pinnedMsgText');
-      if (pinnedMsg) {
-        bar.style.display = 'flex';
-        textSpan.textContent = `${pinnedMsg.sender}: ${pinnedMsg.text || 'Фотография'}`;
-      } else {
-        bar.style.display = 'none';
-      }
-    }
-
-    socket.on('message_pinned', ({ pinnedMsg }) => {
-      updatePinnedMsgUI(pinnedMsg);
-    });
-
-    socket.on('chat_history', (history) => {
-      currentHistory = history;
-      const area = document.getElementById('messagesArea');
-      area.innerHTML = '';
-      history.forEach(renderMessage);
-      area.scrollTop = area.scrollHeight;
-
-      const pinned = history.find(m => m.isPinned);
-      updatePinnedMsgUI(pinned || null);
-    });
-
-    socket.on('new_message', (msg) => {
-      let chatKey;
-      if (msg.chatType === 'group' || msg.chatType === 'channel' || (msg.room && (msg.room.startsWith('group_') || msg.room.startsWith('channel_')))) {
-        chatKey = msg.targetId || msg.room;
-      } else if (msg.room === 'channel_wallchat') {
-        chatKey = 'wallchat';
-      } else {
-        chatKey = msg.sender;
-      }
-
-      if (activeChat && (activeChat.id === chatKey || activeChat.id === msg.sender)) {
-        currentHistory.push(msg);
-        renderMessage(msg);
-        const area = document.getElementById('messagesArea');
-        area.scrollTop = area.scrollHeight;
-      } else if (msg.sender !== currentUser.username) {
-        unreadCounts[chatKey] = (unreadCounts[chatKey] || 0) + 1;
-        renderSidebar();
-      }
-    });
-
-    socket.on('reaction_updated', ({ messageId, reactions }) => {
-      const msg = currentHistory.find(m => m.id === messageId);
-      if (msg) {
-        msg.reactions = reactions;
-        const row = document.querySelector(`.message-row[data-id="${messageId}"]`);
-        if (row) {
-          const bar = row.querySelector('.reactions-bar');
-          if (bar) {
-            bar.innerHTML = EMOJIS.map(emoji => {
-              const users = (reactions && reactions[emoji]) || [];
-              const isActive = users.includes(currentUser.username);
-              const count = users.length;
-              return `<button type="button" class="reaction-btn ${isActive ? 'active' : ''}" onclick="sendReaction(${msg.id}, '${emoji}')">${emoji} ${count > 0 ? count : ''}</button>`;
-            }).join('');
-          }
-        }
-      }
-    });
-
-    socket.on('comment_added', ({ messageId, comments }) => {
-      const msg = currentHistory.find(m => m.id === messageId);
-      if (msg) {
-        msg.comments = comments;
-        const countSpan = document.getElementById(`comments-count-${messageId}`);
-        if (countSpan) countSpan.textContent = comments.length;
-
-        const list = document.getElementById(`comments-list-${messageId}`);
-        if (list) {
-          list.innerHTML = comments.map(c => `
-            <div class="comment-item">
-              <b>${c.sender}</b>: ${c.text}
-              <span style="font-size:0.65rem; opacity:0.6; float:right;">${c.time}</span>
-            </div>
-          `).join('');
-        }
-      }
-    });
-
-    function renderMessage(msg) {
-      const area = document.getElementById('messagesArea');
-      const isMy = msg.sender === currentUser.username;
-
-      const row = document.createElement('div');
-      row.className = `message-row ${isMy ? 'sent' : ''}`;
-      row.dataset.id = msg.id;
-
-      const avatarHTML = msg.avatar ? `<img class="avatar" style="width:28px; height:28px;" src="${msg.avatar}">` : `<div class="avatar" style="width:28px; height:28px;">${msg.sender[0].toUpperCase()}</div>`;
-
-      let replyHTML = '';
-      if (msg.replyTo) {
-        replyHTML = `<div class="reply-quote"><b>${msg.replyTo.sender}</b>: ${msg.replyTo.text || 'Фотография'}</div>`;
-      }
-
-      let imgHTML = msg.image ? `<img src="${msg.image}" class="message-img">` : '';
-
-      const reactionsHTML = EMOJIS.map(emoji => {
-        const users = (msg.reactions && msg.reactions[emoji]) || [];
-        const isActive = users.includes(currentUser.username);
-        const count = users.length;
-        return `<button type="button" class="reaction-btn ${isActive ? 'active' : ''}" onclick="sendReaction(${msg.id}, '${emoji}')">${emoji} ${count > 0 ? count : ''}</button>`;
-      }).join('');
-
-      let commentsHTML = '';
-      if (activeChat && (activeChat.type === 'channel' || activeChat.type === 'wallchat')) {
-        const comments = msg.comments || [];
-        commentsHTML = `
-          <div style="margin-top:8px;">
-            <button type="button" class="secondary" style="font-size:0.75rem; padding:3px 8px;" onclick="toggleCommentsBox(${msg.id})">
-              💬 Комментарии (<span id="comments-count-${msg.id}">${comments.length}</span>)
-            </button>
-            <div id="comments-box-${msg.id}" class="comments-section" style="display:none;">
-              <div id="comments-list-${msg.id}">
-                ${comments.map(c => `
-                  <div class="comment-item">
-                    <b>${c.sender}</b>: ${c.text}
-                    <span style="font-size:0.65rem; opacity:0.6; float:right;">${c.time}</span>
-                  </div>
-                `).join('')}
-              </div>
-              <div style="display:flex; gap:4px; margin-top:6px;">
-                <input type="text" id="comment-input-${msg.id}" placeholder="Ваш комментарий..." style="font-size:0.75rem; padding:4px 8px;">
-                <button type="button" style="font-size:0.75rem; padding:4px 8px;" onclick="sendComment(${msg.id})">></button>
-              </div>
-            </div>
-          </div>
-        `;
-      }
-
-      // Быстрые реакции скрыты по умолчанию в ЛС и Группах, пока не кликнут по сообщению
-      const isHiddenReactions = (activeChat && (activeChat.type === 'dm' || activeChat.type === 'group'));
-
-      row.innerHTML = `
-        ${avatarHTML}
-        <div class="message-bubble" id="msg-bubble-${msg.id}">
-          <button class="msg-corner-reply" onclick="setReplyMsg(${msg.id})">↩</button>
-          <div class="message-sender">${msg.sender} ${msg.isAdmin ? adminCheckmarkSVG : ''}</div>
-          ${replyHTML}
-          <div>${msg.text}</div>
-          ${imgHTML}
-          <div class="reactions-bar ${isHiddenReactions ? 'hidden-reactions' : ''}" id="reactions-bar-${msg.id}">${reactionsHTML}</div>
-          ${commentsHTML}
-          <div class="message-time">${msg.time} ${msg.edited ? '(изм.)' : ''}</div>
-        </div>
-      `;
-
-      const bubble = row.querySelector('.message-bubble');
-      bubble.onclick = (e) => {
-        if (e.target.tagName !== 'BUTTON' && e.target.tagName !== 'INPUT' && !e.target.classList.contains('reaction-btn')) {
-          if (isHiddenReactions) {
-            const bar = document.getElementById(`reactions-bar-${msg.id}`);
-            if (bar) bar.classList.toggle('hidden-reactions');
-          }
-          toggleSelectMessage(msg.id);
-        }
-      };
-
-      area.appendChild(row);
-    }
-
-    function setReplyMsg(id) {
-      const msg = currentHistory.find(m => m.id === id);
-      if (msg) {
-        replyToMsg = { id: msg.id, sender: msg.sender, text: msg.text };
-        document.getElementById('actionPreviewBar').style.display = 'flex';
-        document.getElementById('actionPreviewText').textContent = `Ответ пользователю ${msg.sender}...`;
-      }
-    }
-
-    async function saveSettings() {
-      const dob = document.getElementById('setDob').value;
-      const pass = document.getElementById('setPass').value.trim();
-
-      const body = { dob, avatar: tempAvatarBase64 || undefined };
-      if (pass) body.password = pass;
-
-      const res = await fetch('/api/settings/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
-        body: JSON.stringify(body)
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.avatar) currentUser.avatar = data.avatar;
-        localStorage.setItem('wallchat_user', JSON.stringify(currentUser));
-        tempAvatarBase64 = '';
-        alert('Настройки сохранены');
-        toggleModal('settingsModal', false);
-        loadMyData();
-      } else {
-        const err = await res.json();
-        alert(err.error || 'Ошибка при сохранении настроек');
-      }
-    }
-
-    function logout() {
-      localStorage.removeItem('wallchat_user');
-      currentUser = null;
-      toggleModal('settingsModal', false);
-      toggleModal('groupSettingsModal', false);
-      toggleModal('forwardModal', false);
-      toggleModal('createGroupModal', false);
-      toggleModal('createChannelModal', false);
-      document.body.classList.remove('chat-open');
-      initApp();
-    }
-
-    initApp();
-  </script>
-</body>
-</html>
+        for key in matched_keys:
+            post_info = recent_channel_posts.pop(key, None)
+            if post_info:
+                elapsed = now - post_info["timestamp"]
+                bot_msg_id = post_info["bot_msg_id"]
+                if elapsed <= 60:
+                    await delete_bot_message(bot_msg_id)
+                    print(f"[x] Вакансия удалена из источника за 1 мин. Сообщение {bot_msg_id} удалено.")
+                    
+                    history = load_json(HISTORY_FILE, [])
+                    updated_history = [h for h in history if h.get("msg_id") != bot_msg_id]
+                    if len(updated_history) != len(history):
+                        save_json(HISTORY_FILE, updated_history)
+
+@client.on(events.NewMessage(chats=TARGET_CHATS))
+async def handle_new_message(event):
+    message_text = event.raw_text.lower()
+    
+    # 1. Фильтр стоп-слов
+    if any(ex in message_text for ex in EXCLUDE_KEYWORDS):
+        print(f"[x] Заблокировано стоп-словом из чата {event.chat_id}")
+        return
+
+    # 2. Фильтр дубликатов (12 часов)
+    if is_duplicate_vacancy(event.raw_text):
+        print(f"[x] Пропущен дубликат вакансии из чата {event.chat_id}")
+        return
+
+    # 3. Фильтр ключевых слов
+    found_keywords = [kw for kw in KEYWORDS if kw in message_text]
+    
+    if found_keywords:
+        # Регистрируем в кэше дублей
+        register_sent_vacancy(event.raw_text)
+
+        # 4. Фильтр через ИИ Gemini
+        is_valid_by_ai = await evaluate_with_ai(event.raw_text)
+        if not is_valid_by_ai:
+            print("[x] Gemini ИИ отклонил сообщение как нерелевантное.")
+            return
+
+        chat = await event.get_chat()
+        chat_title = getattr(chat, 'title', 'Чат/Канал')
+        
+        if getattr(chat, 'username', None):
+            message_link = f"https://t.me/{chat.username}/{event.id}"
+        else:
+            message_link = "Ссылка недоступна (приватный чат)"
+            
+        keywords_str = ', '.join(set(found_keywords))
+        
+        alert_text = (
+            "🎯 <b>НАЙДЕНА ВАКАНСИЯ ПО МОНТАЖУ!</b>\n\n"
+            f"📌 <b>Источник:</b> {html.escape(chat_title)}\n"
+            f"🔑 <b>Ключевые слова:</b> <code>{html.escape(keywords_str)}</code>\n"
+            f"🔗 <b>Ссылка:</b> {message_link}\n\n"
+            f"📝 <b>Текст объявления:</b>\n{html.escape(event.raw_text)}"
+        )
+        
+        bot_msg_id = await send_to_bot(alert_text)
+        if bot_msg_id:
+            print(f"[+] Вакансия переслана из: {chat_title}")
+            now = time.time()
+            
+            history = load_json(HISTORY_FILE, [])
+            history.append({"msg_id": bot_msg_id, "timestamp": now})
+            save_json(HISTORY_FILE, history)
+            
+            recent_channel_posts[(event.chat_id, event.id)] = {
+                "bot_msg_id": bot_msg_id,
+                "timestamp": now,
+                "text": event.raw_text
+            }
+
+
+# --- 10. ЗАПУСК ---
+async def main():
+    await start_web_server()
+    
+    # Выводим статус ИИ при старте
+    if GEMINI_API_KEY:
+        print(f"[+] GEMINI_API_KEY найден! Первые символы: {GEMINI_API_KEY[:6]}...")
+    else:
+        print("[!] ВНИМАНИЕ: GEMINI_API_KEY не задан в Environment Variables!")
+
+    asyncio.create_task(auto_delete_old_messages_loop())
+    asyncio.create_task(cleanup_recent_posts_loop())
+    asyncio.create_task(bot_updates_loop())
+    await client.start()
+    print("[+] UserBot успешно запущен и мониторит каналы...")
+    await client.run_until_disconnected()
+
+if __name__ == '__main__':
+    asyncio.run(main())

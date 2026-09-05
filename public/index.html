@@ -1,424 +1,566 @@
-import asyncio
-import os
-import logging
-import time
-import json
-import html
-import re
-from aiohttp import web, ClientSession
-from telethon import TelegramClient, events
-
-# --- 1. НАСТРОЙКИ ПЕРЕМЕННЫХ ---
-API_ID = int(os.environ.get("API_ID", 1234567))
-API_HASH = os.environ.get("API_HASH", "YOUR_API_HASH")
-
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
-MY_CHAT_ID = os.environ.get("MY_CHAT_ID", "YOUR_CHAT_ID")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-
-HISTORY_FILE = 'bot_history.json'
-DATASET_FILE = 'dataset.json'
-
-TARGET_CHATS = [
-    'editors_video',
-    'jetlagchat',
-    'vakansii_reelsmaker',
-    'reelsmakervacancy',
-    'motionhunter',
-    'reelsmaker_tinder',
-    'videojobs',
-    'vacancysmm',
-    'dnative_job',
-    'rabotavakansij'
-]
-
-KEYWORDS = [
-    'reels', 'рилс', 'рилсы', 'рилсов', 'рилсмейкер',
-    'shorts', 'шортс', 'шортсы', 'шортсов',
-    'tiktok', 'тикток', 'тик ток', 'тик-ток',
-    'вертикальн', 'вертикалки', 'клипы', 'клип',
-    'монтаж', 'монтажер', 'монтажёр', 'видеомонтаж', 
-    'видеомонтажер', 'видеомонтажёр',
-    'клипмейкер', 'видеомейкер', 'моушн', 'моушен', 'motion',
-    'capcut', 'капкат', 'premiere', 'премьер', 'after effects', 
-    'афтер эффектис', 'ae', 'davinci', 'давинчи', 'final cut', 'файнал кат',
-    'субтитры', 'динамичный монтаж', 'хуки', 'hooks', 
-    'говорящая голова', 'short video', 'короткие видео', 
-    'склейка', 'цветокор', 'цветокоррекция', 'саунддизайн'
-]
-
-EXCLUDE_KEYWORDS = [
-    'помогу', 'резюме', 'editor', 'портфолио', 'portfolio', 'resume', 
-    'ищу работу', 'ищу проект', 'ищу заказы', 'возьму проект', 'готово к работе',
-    'обо мне', 'о себе', 'мои кейсы', 'мой кейс', 'скиллы', 'обо мне:',
-    'smm', 'смм', 'ugc', 'югс', 'копирайтер', 'копирайтинг',
-    'таргетолог', 'таргет', 'дизайнер карточек', 'инфографика',
-    'маркетолог', 'сторисмейкер', 'менеджер каналов', 'контент-менеджер',
-    'дизайн банеров', 'превьюмейкер',
-    
-    # Спам-фразы и блогеры
-    'мне доверили монтаж', 'viktor makarin', 'arina_alexx', 
-    'lady pop', 'про питер', 'илья стрижаков', 'ирина простолаки',
-    
-    # Забор спама AstroBot
-    'astrobot', 'астролог', 'натальная карта', '5 видео в день'
-]
-
-client = TelegramClient('session_userbot', API_ID, API_HASH)
-
-recent_channel_posts = {}
-sent_vacancies_cache = []
-
-
-# --- 2. УЛУЧШЕННАЯ ПРОВЕРКА ДУБЛИКАТОВ (12 ЧАСОВ) ---
-def clean_line(text: str) -> str:
-    # Удаляем спецсимволы, пунктуацию и приведи к нижнему регистру
-    return re.sub(r'[^\w\s]', '', text).strip().lower()
-
-def is_duplicate_vacancy(raw_text: str) -> bool:
-    now = time.time()
-    global sent_vacancies_cache
-    # Окно очистки: 12 часов (43 200 секунд)
-    sent_vacancies_cache = [v for v in sent_vacancies_cache if now - v["timestamp"] <= 43200]
-    
-    raw_lines = [clean_line(line) for line in raw_text.split('\n')]
-    new_lines = [line for line in raw_lines if len(line) > 5]
-    
-    if not new_lines:
-        return False
-        
-    new_lines_set = set(new_lines)
-    total_lines = len(new_lines_set)
-    
-    for item in sent_vacancies_cache:
-        matching_lines = len(new_lines_set.intersection(item["lines"]))
-        if total_lines >= 3 and matching_lines >= 3:
-            return True
-        elif total_lines < 3 and matching_lines == total_lines:
-            return True
-            
-    return False
-
-def register_sent_vacancy(raw_text: str):
-    raw_lines = [clean_line(line) for line in raw_text.split('\n')]
-    lines = set([line for line in raw_lines if len(line) > 5])
-    sent_vacancies_cache.append({
-        "lines": lines,
-        "timestamp": time.time()
-    })
-
-
-# --- 3. JSON ИСТОРИЯ И ДАТАСЕТ ---
-def load_json(filepath, default):
-    if os.path.exists(filepath):
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"[-] Ошибка чтения {filepath}: {e}")
-    return default
-
-def save_json(filepath, data):
-    try:
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"[-] Ошибка записи {filepath}: {e}")
-
-
-# --- 4. ИИ-АНАЛИЗ (Gemini API с подробными логами) ---
-async def evaluate_with_ai(text: str) -> bool:
-    if not GEMINI_API_KEY:
-        print("[!] GEMINI_API_KEY отсутствует в переменных окружения. ИИ пропущен.")
-        return True
-
-    print(f"[AI] Отправляем текст в Gemini API (длина: {len(text)} симв.)...")
-    
-    dataset = load_json(DATASET_FILE, {"likes": [], "dislikes": []})
-    good_examples = dataset.get("likes", [])[-5:]
-    bad_examples = dataset.get("dislikes", [])[-5:]
-
-    prompt = f"""
-Ты — фильтр вакансий для видеомонтажера (Reels, Shorts, TikTok).
-Оцени текст и ответь, является ли он РЕАЛЬНОЙ ВАКАНСИЕЙ (работодатель ищет исполнителя).
-
-ПРИМЕРЫ ХОРОШИХ ВАКАНСИЙ (Одобрены):
-{json.dumps(good_examples, ensure_ascii=False)}
-
-ПРИМЕРЫ МУСОРА ИЛИ РЕЗЮМЕ (Отклонены):
-{json.dumps(bad_examples, ensure_ascii=False)}
-
-Текст для оценки:
-"{text}"
-
-Ответь СТРОГО одним словом: YES (если это вакансия) или NO (если это резюме, услуги, SMM или мусор).
-"""
-    # Модель gemini-1.5-flash с прямой поддержкой REST v1beta
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
-
-    try:
-        async with ClientSession() as session:
-            async with session.post(url, json=payload, timeout=10) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    answer = data['candidates'][0]['content']['parts'][0]['text'].strip().upper()
-                    print(f"[AI] Ответ от Gemini: {answer}")
-                    return 'YES' in answer
-                else:
-                    err_body = await resp.text()
-                    print(f"[-] Ошибка ответа Gemini API (Status {resp.status}): {err_body}")
-    except Exception as e:
-        print(f"[-] Ошибка соединения с Gemini API: {e}")
-    return True
-
-
-# --- 5. TELEGRAM BOT API ---
-async def send_to_bot(text: str) -> int | None:
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": MY_CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-        "reply_markup": {
-            "inline_keyboard": [[
-                {"text": "👍 Подходит", "callback_data": "vote_like"},
-                {"text": "👎 Мусор", "callback_data": "vote_dislike"}
-            ]]
-        }
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wallchat</title>
+  <style>
+    :root {
+      --primary-gradient: linear-gradient(135deg, #b83bde, #3558d0);
+      --bg-color: #0e1621;
+      --panel-bg: #17212b;
+      --border-color: #242f3d;
+      --text-color: #ffffff;
+      --msg-out: #3558d0;
+      --msg-in: #182533;
+      --input-bg: #242f3d;
     }
-    async with ClientSession() as session:
-        async with session.post(url, json=payload) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                return data.get("result", {}).get("message_id")
-            else:
-                print(f"[-] Ошибка отправки: {await resp.text()}")
-                return None
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { background: var(--bg-color); color: var(--text-color); display: flex; height: 100vh; justify-content: center; align-items: center; }
 
-async def delete_bot_message(msg_id: int):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage"
-    payload = {"chat_id": MY_CHAT_ID, "message_id": msg_id}
-    async with ClientSession() as session:
-        await session.post(url, json=payload)
+    /* Экраны Авторизации и Настроек */
+    .auth-screen, .modal { display: none; width: 100%; max-width: 450px; background: var(--panel-bg); padding: 24px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); position: absolute; z-index: 10; }
+    .auth-screen.active, .modal.active { display: flex; flex-direction: column; gap: 14px; }
 
-async def edit_bot_message_text(msg_id: int, text: str):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageText"
-    payload = {
-        "chat_id": MY_CHAT_ID,
-        "message_id": msg_id,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True
+    /* Главное окно приложения */
+    .app-container { width: 100%; max-width: 1000px; height: 92vh; background: var(--panel-bg); border-radius: 12px; display: none; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+    .app-container.active { display: flex; }
+
+    /* Сайдбар слева */
+    .sidebar { width: 320px; background: #121921; border-right: 1px solid var(--border-color); display: flex; flex-direction: column; }
+    .sidebar-header { background: var(--primary-gradient); padding: 14px; display: flex; justify-content: space-between; align-items: center; }
+    .user-info { display: flex; align-items: center; gap: 8px; font-weight: bold; cursor: pointer; }
+
+    .nav-tabs { display: flex; background: #0e1621; border-bottom: 1px solid var(--border-color); }
+    .nav-tab { flex: 1; padding: 10px; text-align: center; cursor: pointer; font-size: 0.85rem; font-weight: bold; color: #8e949a; border-bottom: 2px solid transparent; }
+    .nav-tab.active { color: #fff; border-bottom-color: #b83bde; }
+
+    .tab-content { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .chat-item { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; cursor: pointer; transition: background 0.2s; }
+    .chat-item:hover, .chat-item.active { background: #242f3d; }
+    .chat-item .info { flex: 1; overflow: hidden; }
+    .chat-item .name { font-weight: bold; display: flex; align-items: center; gap: 4px; }
+
+    /* Значок галочки администратора */
+    .admin-badge { display: inline-flex; align-items: center; color: #b83bde; }
+    .admin-badge svg { width: 16px; height: 16px; }
+
+    /* Аватарка */
+    .avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: #3558d0; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0; }
+
+    /* Область чата справа */
+    .chat-main { flex: 1; display: flex; flex-direction: column; background: var(--panel-bg); }
+    .chat-header { padding: 14px 20px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 10px; font-weight: bold; background: #121921; }
+    .messages-area { flex: 1; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+
+    .message-row { display: flex; gap: 8px; align-items: flex-end; }
+    .message-row.sent { flex-direction: row-reverse; }
+    .message-bubble { max-width: 65%; padding: 10px 14px; border-radius: 12px; word-break: break-word; background: var(--msg-in); }
+    .message-row.sent .message-bubble { background: var(--msg-out); }
+    .message-sender { font-size: 0.75rem; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 4px; color: #a2b4c7; }
+    .message-img { max-width: 100%; max-height: 250px; border-radius: 8px; margin-top: 6px; display: block; }
+    .message-time { font-size: 0.65rem; opacity: 0.7; text-align: right; margin-top: 4px; }
+
+    /* Панель ввода */
+    .input-area { display: flex; align-items: center; padding: 12px; background: #0e1621; gap: 8px; border-top: 1px solid var(--border-color); }
+    input, button { padding: 10px 14px; border: none; border-radius: 8px; outline: none; }
+    input { background: var(--input-bg); color: #fff; flex: 1; }
+    button { background: var(--primary-gradient); color: #fff; font-weight: bold; cursor: pointer; }
+    button.secondary { background: #242f3d; }
+    .photo-btn { cursor: pointer; padding: 8px 12px; background: #242f3d; border-radius: 8px; font-size: 1.2rem; }
+
+    /* Превью фото перед отправкой */
+    .img-preview-bar { display: none; padding: 8px; background: #121921; align-items: center; gap: 10px; }
+    .img-preview-bar img { height: 50px; border-radius: 6px; }
+
+    .empty-chat-state { flex: 1; display: flex; justify-content: center; align-items: center; color: #8e949a; }
+  </style>
+</head>
+<body>
+
+  <!-- Авторизация -->
+  <div id="authScreen" class="auth-screen active">
+    <h2 style="text-align:center; background: var(--primary-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Wallchat</h2>
+    <div style="display:flex; gap:8px;">
+      <button id="tabLogin" style="flex:1" onclick="switchAuthTab('login')">Вход</button>
+      <button id="tabReg" style="flex:1" class="secondary" onclick="switchAuthTab('reg')">Регистрация</button>
+    </div>
+    <div id="regAvatarBox" style="display:none; text-align:center;">
+      <label for="regAvatarInput" style="cursor:pointer;">
+        <img id="regAvatarPreview" class="avatar" style="width:70px; height:70px; margin:auto;" src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>" alt="+">
+        <div style="font-size:0.8rem; color:#b83bde; margin-top:4px;">Выбрать аватар из галереи</div>
+      </label>
+      <input type="file" id="regAvatarInput" accept="image/*" style="display:none" onchange="loadPreview(this, 'regAvatarPreview')">
+    </div>
+    <input type="text" id="authName" placeholder="Имя пользователя">
+    <input type="password" id="authPass" placeholder="Пароль">
+    <button onclick="submitAuth()">Продолжить</button>
+  </div>
+
+  <!-- Окно Настроек -->
+  <div id="settingsModal" class="modal">
+    <h2>Настройки профиля</h2>
+    <div style="text-align:center;">
+      <label for="setAvatarInput" style="cursor:pointer;">
+        <img id="setAvatarPreview" class="avatar" style="width:80px; height:80px; margin:auto;" src="" alt="Avatar">
+        <div style="font-size:0.85rem; color:#b83bde; margin-top:4px;">Сменить аватар</div>
+      </label>
+      <input type="file" id="setAvatarInput" accept="image/*" style="display:none" onchange="loadPreview(this, 'setAvatarPreview')">
+    </div>
+    <input type="password" id="setPass" placeholder="Новый пароль (опционально)">
+    <button onclick="saveSettings()">Сохранить</button>
+    <button class="secondary" onclick="toggleModal('settingsModal', false)">Закрыть</button>
+    <button class="secondary" style="background:#d32f2f" onclick="logout()">Выйти</button>
+  </div>
+
+  <!-- Модальное окно создания группы -->
+  <div id="createGroupModal" class="modal">
+    <h2>Создать группу</h2>
+    <input type="text" id="groupNameInput" placeholder="Название группы">
+    <div style="font-size:0.9rem; margin-top:6px;">Выберите друзей для добавления:</div>
+    <div id="friendsChecklist" style="max-height:150px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;"></div>
+    <button onclick="submitCreateGroup()">Создать чат</button>
+    <button class="secondary" onclick="toggleModal('createGroupModal', false)">Отмена</button>
+  </div>
+
+  <!-- Главный интерфейс мессенджера -->
+  <div id="appContainer" class="app-container">
+    <!-- Сайдбар -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <div class="user-info" onclick="toggleModal('settingsModal', true)">
+          <img id="myAvatar" class="avatar" style="width:32px; height:32px; display:none;">
+          <div id="myAvatarText" class="avatar" style="width:32px; height:32px;">U</div>
+          <span id="myName">User</span>
+          <span id="myAdminBadge"></span>
+        </div>
+        <button class="secondary" style="padding:6px 10px; font-size:0.8rem;" onclick="toggleModal('settingsModal', true)">⚙</button>
+      </div>
+
+      <div class="nav-tabs">
+        <div id="tabChatsBtn" class="nav-tab active" onclick="switchSidebarTab('chats')">Чаты</div>
+        <div id="tabFriendsBtn" class="nav-tab" onclick="switchSidebarTab('friends')">Друзья</div>
+      </div>
+
+      <!-- Вкладка: Список чатов -->
+      <div id="chatsTab" class="tab-content">
+        <div style="font-size:0.8rem; color:#8e949a; margin:4px 0;">ЛИЧНЫЕ ЧАТЫ И ГРУППЫ</div>
+        <div id="chatsList"></div>
+      </div>
+
+      <!-- Вкладка: Друзья и заявки -->
+      <div id="friendsTab" class="tab-content" style="display:none;">
+        <div style="display:flex; gap:6px;">
+          <input type="text" id="addFriendName" placeholder="Никнейм друга" style="font-size:0.85rem;">
+          <button onclick="sendFriendRequest()" style="padding:8px 12px;">+</button>
+        </div>
+        
+        <button onclick="openCreateGroupModal()" style="margin-top:6px;" class="secondary">+ Создать группу</button>
+
+        <div style="font-size:0.8rem; color:#8e949a; margin-top:10px;">ЗАЯВКИ В ДРУЗЬЯ</div>
+        <div id="requestsList"></div>
+
+        <div style="font-size:0.8rem; color:#8e949a; margin-top:10px;">МОИ ДРУЗЬЯ</div>
+        <div id="friendsList"></div>
+      </div>
+    </div>
+
+    <!-- Основной чат -->
+    <div class="chat-main">
+      <div id="chatHeader" class="chat-header" style="display:none;">
+        <div id="activeChatAvatar" class="avatar">C</div>
+        <div style="flex:1;">
+          <div id="activeChatName" style="display:flex; align-items:center; gap:4px;">Выберите чат</div>
+          <div id="activeChatSub" style="font-size:0.75rem; color:#8e949a; font-weight:normal;"></div>
+        </div>
+      </div>
+
+      <div id="emptyState" class="empty-chat-state">
+        Выберите друга или группу из списка слева для начала общения
+      </div>
+
+      <div id="messagesArea" class="messages-area" style="display:none;"></div>
+
+      <div id="imgPreviewBar" class="img-preview-bar">
+        <img id="imgPreview" src="" alt="preview">
+        <span style="font-size:0.85rem; flex:1;">Изображение готово к отправке</span>
+        <button class="secondary" onclick="cancelImage()" style="padding:4px 8px;">✕</button>
+      </div>
+
+      <form id="chatForm" class="input-area" style="display:none;" onsubmit="handleSendMsg(event)">
+        <label class="photo-btn" title="Отправить фото">
+          📷
+          <input type="file" id="msgPhotoInput" accept="image/*" style="display:none;" onchange="handleMsgPhoto(this)">
+        </label>
+        <input type="text" id="msgInput" placeholder="Напишите сообщение..." autocomplete="off">
+        <button type="submit">Отправить</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    let authMode = 'login';
+    let currentUser = JSON.parse(localStorage.getItem('wallchat_user') || 'null');
+    let tempAvatarBase64 = '';
+    let selectedImageBase64 = null;
+
+    let activeChat = null; // { type: 'dm'|'group', id: string, name: string, avatar: string, isAdmin: bool }
+    let myData = { friends: [], friendRequests: [], groups: [] };
+
+    const adminCheckmarkSVG = `<span class="admin-badge" title="Администратор"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2l2.4 1.8 3-.4.8 2.9 2.8 1.2-.8 2.9.8 2.9-2.8 1.2-.8 2.9-3-.4L12 22l-2.4-1.8-3 .4-.8-2.9-2.8-1.2.8-2.9-.8-2.9 2.8-1.2.8-2.9 3 .4L12 2z" fill="#3558d0" stroke="#b83bde" stroke-width="1.5"/><path d="M9 12l2 2 4-4" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg></span>`;
+
+    function toggleModal(id, show) {
+      const modal = document.getElementById(id);
+      if (show) modal.classList.add('active');
+      else modal.classList.remove('active');
     }
-    async with ClientSession() as session:
-        await session.post(url, json=payload)
 
-async def answer_callback_query(callback_id: str, text: str):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/answerCallbackQuery"
-    payload = {"callback_query_id": callback_id, "text": text}
-    async with ClientSession() as session:
-        await session.post(url, json=payload)
+    function switchAuthTab(mode) {
+      authMode = mode;
+      document.getElementById('regAvatarBox').style.display = mode === 'reg' ? 'block' : 'none';
+      document.getElementById('tabLogin').className = mode === 'login' ? '' : 'secondary';
+      document.getElementById('tabReg').className = mode === 'reg' ? '' : 'secondary';
+    }
 
+    function loadPreview(input, imgId) {
+      const file = input.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          document.getElementById(imgId).src = e.target.result;
+          tempAvatarBase64 = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      }
+    }
 
-# --- 6. ОБРАБОТКА КНОПОК 👍 / 👎 ---
-async def bot_updates_loop():
-    offset = 0
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
-    while True:
-        try:
-            async with ClientSession() as session:
-                async with session.get(url, params={"offset": offset, "timeout": 20}) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        for update in data.get("result", []):
-                            offset = update["update_id"] + 1
-                            if "callback_query" in update:
-                                cb = update["callback_query"]
-                                cb_id = cb["id"]
-                                data_cb = cb.get("data")
-                                msg = cb.get("message", {})
-                                msg_id = msg.get("message_id")
-                                raw_text = msg.get("text", "")
+    async function submitAuth() {
+      const username = document.getElementById('authName').value.trim();
+      const password = document.getElementById('authPass').value.trim();
+      if (!username || !password) return alert('Заполните все поля');
 
-                                dataset = load_json(DATASET_FILE, {"likes": [], "dislikes": []})
+      const endpoint = authMode === 'login' ? '/api/login' : '/api/register';
+      const body = { username, password, avatar: authMode === 'reg' ? tempAvatarBase64 : undefined };
 
-                                if data_cb == "vote_like":
-                                    dataset["likes"].append(raw_text)
-                                    save_json(DATASET_FILE, dataset)
-                                    await answer_callback_query(cb_id, "Записано: Подходит 👍")
-                                    await edit_bot_message_text(msg_id, f"✅ <b>[ОДОБРЕНО]</b>\n\n{html.escape(raw_text)}")
-                                
-                                elif data_cb == "vote_dislike":
-                                    dataset["dislikes"].append(raw_text)
-                                    save_json(DATASET_FILE, dataset)
-                                    await answer_callback_query(cb_id, "Записано в мусор 👎")
-                                    await delete_bot_message(msg_id)
+      const res = await fetch(endpoint, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+      const data = await res.json();
 
-                                    history = load_json(HISTORY_FILE, [])
-                                    history = [h for h in history if h.get("msg_id") != msg_id]
-                                    save_json(HISTORY_FILE, history)
-        except Exception as e:
-            print(f"[-] Ошибка в опросе кнопок бота: {e}")
-        await asyncio.sleep(2)
+      if (res.ok) {
+        currentUser = data;
+        localStorage.setItem('wallchat_user', JSON.stringify(data));
+        initApp();
+      } else {
+        alert(data.error);
+      }
+    }
 
+    async function loadMyData() {
+      if (!currentUser) return;
+      const res = await fetch('/api/me', { headers: { 'Authorization': `Bearer ${currentUser.token}` } });
+      if (res.ok) {
+        myData = await res.json();
+        renderSidebar();
+      } else {
+        logout();
+      }
+    }
 
-# --- 7. ФОНОВЫЕ ЗАДАЧИ ---
-async def auto_delete_old_messages_loop():
-    THREE_DAYS_SEC = 3 * 24 * 3600
-    while True:
-        await asyncio.sleep(600)
-        try:
-            history = load_json(HISTORY_FILE, [])
-            if not history:
-                continue
-            
-            now = time.time()
-            updated_history = []
-            for item in history:
-                msg_id = item.get("msg_id")
-                ts = item.get("timestamp", 0)
-                if now - ts >= THREE_DAYS_SEC:
-                    if msg_id:
-                        await delete_bot_message(msg_id)
-                        print(f"[x] Сообщение {msg_id} удалено (3 дня).")
-                else:
-                    updated_history.append(item)
-            
-            if len(updated_history) != len(history):
-                save_json(HISTORY_FILE, updated_history)
-        except Exception as e:
-            print(f"[-] Ошибка автоудаления: {e}")
+    function renderSidebar() {
+      // Мой профиль
+      document.getElementById('myName').textContent = currentUser.username;
+      document.getElementById('myAdminBadge').innerHTML = currentUser.isAdmin ? adminCheckmarkSVG : '';
+      if (currentUser.avatar) {
+        document.getElementById('myAvatar').src = currentUser.avatar;
+        document.getElementById('myAvatar').style.display = 'block';
+        document.getElementById('myAvatarText').style.display = 'none';
+      } else {
+        document.getElementById('myAvatarText').textContent = currentUser.username[0].toUpperCase();
+        document.getElementById('myAvatarText').style.display = 'flex';
+        document.getElementById('myAvatar').style.display = 'none';
+      }
 
-async def cleanup_recent_posts_loop():
-    while True:
-        await asyncio.sleep(120)
-        now = time.time()
-        to_del = [k for k, v in recent_channel_posts.items() if now - v["timestamp"] > 300]
-        for k in to_del:
-            recent_channel_posts.pop(k, None)
+      // Список чатов (Друзья + Группы)
+      const chatsList = document.getElementById('chatsList');
+      chatsList.innerHTML = '';
 
-
-# --- 8. ВЕБ-СЕРВЕР ---
-async def handle_ping(request):
-    return web.Response(text="Бот активен")
-
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get('/', handle_ping)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.environ.get("PORT", 8080))
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    print(f"[+] Веб-сервер запущен на порту {port}")
-
-
-# --- 9. ОБРАБОТКА ВАКАНСИЙ И СЕРВЕРА TELEGRAM ---
-@client.on(events.MessageDeleted())
-async def handle_deleted_message(event):
-    now = time.time()
-    chat_id = getattr(event, 'chat_id', None)
-    
-    for deleted_id in event.deleted_ids:
-        matched_keys = []
-        for (c_id, m_id) in list(recent_channel_posts.keys()):
-            if m_id == deleted_id:
-                if chat_id is None or c_id == chat_id:
-                    matched_keys.append((c_id, m_id))
+      // Личные чаты (Друзья)
+      myData.friends.forEach(f => {
+        const item = document.createElement('div');
+        item.className = `chat-item ${activeChat?.id === f.username ? 'active' : ''}`;
+        item.onclick = () => openChat({ type: 'dm', id: f.username, name: f.username, avatar: f.avatar, isAdmin: f.isAdmin });
         
-        for key in matched_keys:
-            post_info = recent_channel_posts.pop(key, None)
-            if post_info:
-                elapsed = now - post_info["timestamp"]
-                bot_msg_id = post_info["bot_msg_id"]
-                if elapsed <= 60:
-                    await delete_bot_message(bot_msg_id)
-                    print(f"[x] Вакансия удалена из источника за 1 мин. Сообщение {bot_msg_id} удалено.")
-                    
-                    history = load_json(HISTORY_FILE, [])
-                    updated_history = [h for h in history if h.get("msg_id") != bot_msg_id]
-                    if len(updated_history) != len(history):
-                        save_json(HISTORY_FILE, updated_history)
+        const avatarHTML = f.avatar 
+          ? `<img class="avatar" src="${f.avatar}">`
+          : `<div class="avatar">${f.username[0].toUpperCase()}</div>`;
 
-@client.on(events.NewMessage(chats=TARGET_CHATS))
-async def handle_new_message(event):
-    message_text = event.raw_text.lower()
-    
-    # 1. Фильтр стоп-слов
-    if any(ex in message_text for ex in EXCLUDE_KEYWORDS):
-        print(f"[x] Заблокировано стоп-словом из чата {event.chat_id}")
-        return
+        item.innerHTML = `
+          ${avatarHTML}
+          <div class="info">
+            <div class="name">${f.username} ${f.isAdmin ? adminCheckmarkSVG : ''}</div>
+            <div style="font-size:0.75rem; color:#8e949a;">Личные сообщения</div>
+          </div>
+        `;
+        chatsList.appendChild(item);
+      });
 
-    # 2. Фильтр дубликатов (12 часов)
-    if is_duplicate_vacancy(event.raw_text):
-        print(f"[x] Пропущен дубликат вакансии из чата {event.chat_id}")
-        return
+      // Групповые чаты
+      myData.groups.forEach(g => {
+        const item = document.createElement('div');
+        item.className = `chat-item ${activeChat?.id === g.id ? 'active' : ''}`;
+        item.onclick = () => openChat({ type: 'group', id: g.id, name: g.name, avatar: null });
 
-    # 3. Фильтр ключевых слов
-    found_keywords = [kw for kw in KEYWORDS if kw in message_text]
-    
-    if found_keywords:
-        # Регистрируем в кэше дублей
-        register_sent_vacancy(event.raw_text)
+        item.innerHTML = `
+          <div class="avatar" style="background:#b83bde;">👥</div>
+          <div class="info">
+            <div class="name">${g.name}</div>
+            <div style="font-size:0.75rem; color:#8e949a;">Участников: ${g.members.length}</div>
+          </div>
+        `;
+        chatsList.appendChild(item);
+      });
 
-        # 4. Фильтр через ИИ Gemini
-        is_valid_by_ai = await evaluate_with_ai(event.raw_text)
-        if not is_valid_by_ai:
-            print("[x] Gemini ИИ отклонил сообщение как нерелевантное.")
-            return
+      // Заявки в друзья
+      const reqList = document.getElementById('requestsList');
+      reqList.innerHTML = myData.friendRequests.length === 0 ? '<div style="font-size:0.8rem; color:#666;">Нет новых заявок</div>' : '';
+      myData.friendRequests.forEach(r => {
+        const item = document.createElement('div');
+        item.className = 'chat-item';
+        item.innerHTML = `
+          <div class="info">
+            <div class="name">${r.username} ${r.isAdmin ? adminCheckmarkSVG : ''}</div>
+          </div>
+          <button onclick="acceptRequest('${r.username}')" style="padding:4px 8px; font-size:0.75rem;">✓</button>
+          <button onclick="rejectRequest('${r.username}')" class="secondary" style="padding:4px 8px; font-size:0.75rem;">✕</button>
+        `;
+        reqList.appendChild(item);
+      });
 
-        chat = await event.get_chat()
-        chat_title = getattr(chat, 'title', 'Чат/Канал')
-        
-        if getattr(chat, 'username', None):
-            message_link = f"https://t.me/{chat.username}/{event.id}"
-        else:
-            message_link = "Ссылка недоступна (приватный чат)"
-            
-        keywords_str = ', '.join(set(found_keywords))
-        
-        alert_text = (
-            "🎯 <b>НАЙДЕНА ВАКАНСИЯ ПО МОНТАЖУ!</b>\n\n"
-            f"📌 <b>Источник:</b> {html.escape(chat_title)}\n"
-            f"🔑 <b>Ключевые слова:</b> <code>{html.escape(keywords_str)}</code>\n"
-            f"🔗 <b>Ссылка:</b> {message_link}\n\n"
-            f"📝 <b>Текст объявления:</b>\n{html.escape(event.raw_text)}"
-        )
-        
-        bot_msg_id = await send_to_bot(alert_text)
-        if bot_msg_id:
-            print(f"[+] Вакансия переслана из: {chat_title}")
-            now = time.time()
-            
-            history = load_json(HISTORY_FILE, [])
-            history.append({"msg_id": bot_msg_id, "timestamp": now})
-            save_json(HISTORY_FILE, history)
-            
-            recent_channel_posts[(event.chat_id, event.id)] = {
-                "bot_msg_id": bot_msg_id,
-                "timestamp": now,
-                "text": event.raw_text
-            }
+      // Список друзей во вкладке Друзья
+      const fList = document.getElementById('friendsList');
+      fList.innerHTML = myData.friends.length === 0 ? '<div style="font-size:0.8rem; color:#666;">Список друзей пуст</div>' : '';
+      myData.friends.forEach(f => {
+        const item = document.createElement('div');
+        item.className = 'chat-item';
+        item.onclick = () => { switchSidebarTab('chats'); openChat({ type: 'dm', id: f.username, name: f.username, avatar: f.avatar, isAdmin: f.isAdmin }); };
+        item.innerHTML = `
+          <div class="name">${f.username} ${f.isAdmin ? adminCheckmarkSVG : ''}</div>
+        `;
+        fList.appendChild(item);
+      });
+    }
 
+    function switchSidebarTab(tab) {
+      document.getElementById('chatsTab').style.display = tab === 'chats' ? 'flex' : 'none';
+      document.getElementById('friendsTab').style.display = tab === 'friends' ? 'flex' : 'none';
+      document.getElementById('tabChatsBtn').className = `nav-tab ${tab === 'chats' ? 'active' : ''}`;
+      document.getElementById('tabFriendsBtn').className = `nav-tab ${tab === 'friends' ? 'active' : ''}`;
+    }
 
-# --- 10. ЗАПУСК ---
-async def main():
-    await start_web_server()
-    
-    # Выводим статус ИИ при старте
-    if GEMINI_API_KEY:
-        print(f"[+] GEMINI_API_KEY найден! Первые символы: {GEMINI_API_KEY[:6]}...")
-    else:
-        print("[!] ВНИМАНИЕ: GEMINI_API_KEY не задан в Environment Variables!")
+    async function sendFriendRequest() {
+      const name = document.getElementById('addFriendName').value.trim();
+      if (!name) return;
 
-    asyncio.create_task(auto_delete_old_messages_loop())
-    asyncio.create_task(cleanup_recent_posts_loop())
-    asyncio.create_task(bot_updates_loop())
-    await client.start()
-    print("[+] UserBot успешно запущен и мониторит каналы...")
-    await client.run_until_disconnected()
+      const res = await fetch('/api/friends/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ targetUsername: name })
+      });
+      const data = await res.json();
+      alert(data.message || data.error);
+      if (res.ok) {
+        document.getElementById('addFriendName').value = '';
+        loadMyData();
+      }
+    }
 
-if __name__ == '__main__':
-    asyncio.run(main())
+    async function acceptRequest(requesterUsername) {
+      const res = await fetch('/api/friends/accept', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ requesterUsername })
+      });
+      if (res.ok) loadMyData();
+    }
+
+    async function rejectRequest(requesterUsername) {
+      await fetch('/api/friends/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ requesterUsername })
+      });
+      loadMyData();
+    }
+
+    function openCreateGroupModal() {
+      const checklist = document.getElementById('friendsChecklist');
+      checklist.innerHTML = myData.friends.length === 0 ? 'Сначала добавьте друзей' : '';
+      myData.friends.forEach(f => {
+        const label = document.createElement('label');
+        label.style.display = 'flex';
+        label.style.gap = '8px';
+        label.innerHTML = `<input type="checkbox" value="${f.username}"> ${f.username}`;
+        checklist.appendChild(label);
+      });
+      toggleModal('createGroupModal', true);
+    }
+
+    async function submitCreateGroup() {
+      const groupName = document.getElementById('groupNameInput').value.trim();
+      if (!groupName) return alert('Введите название группы');
+
+      const checked = Array.from(document.querySelectorAll('#friendsChecklist input:checked')).map(cb => cb.value);
+
+      const res = await fetch('/api/groups/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ groupName, memberUsernames: checked })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toggleModal('createGroupModal', false);
+        document.getElementById('groupNameInput').value = '';
+        await loadMyData();
+        openChat({ type: 'group', id: data.group.id, name: data.group.name });
+      } else {
+        alert(data.error);
+      }
+    }
+
+    function openChat(chat) {
+      activeChat = chat;
+      renderSidebar();
+
+      document.getElementById('emptyState').style.display = 'none';
+      document.getElementById('chatHeader').style.display = 'flex';
+      document.getElementById('messagesArea').style.display = 'flex';
+      document.getElementById('chatForm').style.display = 'flex';
+
+      document.getElementById('activeChatName').innerHTML = `${chat.name} ${chat.isAdmin ? adminCheckmarkSVG : ''}`;
+      document.getElementById('activeChatSub').textContent = chat.type === 'dm' ? 'Личный чат' : 'Групповой чат';
+
+      const avatarHeader = document.getElementById('activeChatAvatar');
+      if (chat.avatar) {
+        avatarHeader.outerHTML = `<img id="activeChatAvatar" class="avatar" src="${chat.avatar}">`;
+      } else {
+        avatarHeader.outerHTML = `<div id="activeChatAvatar" class="avatar">${chat.name[0].toUpperCase()}</div>`;
+      }
+
+      document.getElementById('messagesArea').innerHTML = '';
+
+      // Подключиться к комнате через socket
+      socket.emit('join_room', { token: currentUser.token, chatType: chat.type, targetId: chat.id });
+    }
+
+    function handleMsgPhoto(input) {
+      const file = input.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          selectedImageBase64 = e.target.result;
+          document.getElementById('imgPreview').src = selectedImageBase64;
+          document.getElementById('imgPreviewBar').style.display = 'flex';
+        };
+        reader.readAsDataURL(file);
+      }
+    }
+
+    function cancelImage() {
+      selectedImageBase64 = null;
+      document.getElementById('imgPreviewBar').style.display = 'none';
+      document.getElementById('msgPhotoInput').value = '';
+    }
+
+    function handleSendMsg(e) {
+      e.preventDefault();
+      const input = document.getElementById('msgInput');
+      const text = input.value.trim();
+
+      if ((text || selectedImageBase64) && activeChat) {
+        socket.emit('send_message', {
+          token: currentUser.token,
+          chatType: activeChat.type,
+          targetId: activeChat.id,
+          text: text,
+          image: selectedImageBase64
+        });
+
+        input.value = '';
+        cancelImage();
+      }
+    }
+
+    socket.on('chat_history', (history) => {
+      const area = document.getElementById('messagesArea');
+      area.innerHTML = '';
+      history.forEach(appendMessage);
+    });
+
+    socket.on('new_message', (msg) => {
+      appendMessage(msg);
+    });
+
+    socket.on('error_msg', (data) => alert(data.error));
+
+    function appendMessage(msg) {
+      const area = document.getElementById('messagesArea');
+      const isMe = msg.sender === currentUser.username;
+
+      const row = document.createElement('div');
+      row.className = `message-row ${isMe ? 'sent' : 'received'}`;
+
+      const avatarHTML = msg.avatar 
+        ? `<img class="avatar" style="width:30px; height:30px;" src="${msg.avatar}">`
+        : `<div class="avatar" style="width:30px; height:30px; font-size:0.8rem;">${msg.sender[0].toUpperCase()}</div>`;
+
+      const imgHTML = msg.image ? `<img class="message-img" src="${msg.image}">` : '';
+
+      row.innerHTML = `
+        ${avatarHTML}
+        <div class="message-bubble">
+          <div class="message-sender">${msg.sender} ${msg.isAdmin ? adminCheckmarkSVG : ''}</div>
+          <div>${msg.text}</div>
+          ${imgHTML}
+          <div class="message-time">${msg.time}</div>
+        </div>
+      `;
+
+      area.appendChild(row);
+      area.scrollTop = area.scrollHeight;
+    }
+
+    async function saveSettings() {
+      const newPassword = document.getElementById('setPass').value.trim();
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+        body: JSON.stringify({ avatar: tempAvatarBase64 || currentUser.avatar, newPassword })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        currentUser.avatar = data.avatar;
+        localStorage.setItem('wallchat_user', JSON.stringify(currentUser));
+        toggleModal('settingsModal', false);
+        loadMyData();
+      }
+    }
+
+    function logout() {
+      localStorage.removeItem('wallchat_user');
+      currentUser = null;
+      document.getElementById('appContainer').classList.remove('active');
+      document.getElementById('authScreen').classList.add('active');
+      toggleModal('settingsModal', false);
+    }
+
+    function initApp() {
+      document.getElementById('authScreen').classList.remove('active');
+      document.getElementById('appContainer').classList.add('active');
+      loadMyData();
+    }
+
+    if (currentUser) initApp();
+  </script>
+</body>
+</html>
